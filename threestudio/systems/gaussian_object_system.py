@@ -1,0 +1,690 @@
+import os
+import io
+import threestudio
+import torch
+import numpy as np
+import open3d as o3d
+import torch.nn.functional as F
+import cv2
+import einops
+import random
+from argparse import ArgumentParser
+from dataclasses import dataclass
+from functools import partial
+from PIL import Image
+import clip
+from gaussian_renderer import render
+from scene import GaussianModel
+from arguments import PipelineParams, OptimizationParams
+from scene.cameras import Render_Camera
+from utils.sh_utils import SH2RGB
+from utils.loss_utils import l1_loss, l2_loss, ssim, monodisp
+from utils.graphics_utils import focal2fov, fov2focal
+from scene.gaussian_model import BasicPointCloud
+from plyfile import PlyData, PlyElement
+from torch import nn
+from torchvision.transforms import ToPILImage, ToTensor
+from torchvision.utils import save_image, make_grid
+from torchmetrics.image import PeakSignalNoiseRatio as PSNR, StructuralSimilarityIndexMeasure as SSIM, LearnedPerceptualImagePatchSimilarity as LPIPS
+from torchmetrics.functional.regression import pearson_corrcoef
+from cldm.ddim_hacked import DDIMSampler
+from annotator.util import resize_image, HWC3
+from cldm.model import create_model, load_state_dict
+from minlora import add_lora, LoRAParametrization
+from threestudio.systems.base import BaseLift3DSystem
+from threestudio.utils.typing import *
+from utils.util_print import STR_ERROR, STR_DEBUG, STR_STAGE
+
+
+@torch.no_grad()
+def process(
+    model,
+    ddim_sampler: DDIMSampler,
+    input_image: np.ndarray,
+    prompt: str,
+    a_prompt: str = '',
+    n_prompt: str = '',
+    num_samples: int = 1,  # 1
+    image_resolution: int = 512,
+    ddim_steps: int = 50,  # 50
+    guess_mode: bool = False,
+    strength: float = 1.0,  # 1.0
+    scale: float = 1.0,  # 1.0
+    eta: float = 1.0,  # 1.0
+    denoise_strength: float = 1.0  # random: [0.1, 1.0]
+):
+    input_image = HWC3(input_image)
+    detected_map = input_image.copy()
+
+    img = resize_image(input_image, image_resolution)
+    H, W, C = img.shape  # W, H 都是64倍数
+
+    detected_map = cv2.resize(detected_map, (W, H), interpolation=cv2.INTER_LINEAR)  # 同理resize到同样的大小
+
+    control = torch.from_numpy(detected_map.copy()).float().cuda() / 255.0
+    control = torch.stack([control for _ in range(num_samples)], dim=0)
+    control = einops.rearrange(control, 'b h w c -> b c h w').clone()
+
+    img = torch.from_numpy(img.copy()).float().cuda() / 127.0 - 1.0  #? 不懂为什么要这样子初始化
+    img = torch.stack([img for _ in range(num_samples)], dim=0)
+    img = einops.rearrange(img, 'b h w c -> b c h w').clone()
+
+    cond = {"c_concat": [control], "c_crossattn": [model.get_learned_conditioning([prompt + ', ' + a_prompt] * num_samples)]}
+    un_cond = {"c_concat": None if guess_mode else [control], "c_crossattn": [model.get_learned_conditioning([n_prompt] * num_samples)]}
+
+    ddim_sampler.make_schedule(ddim_steps, ddim_eta=eta, verbose=False)  # 生成timesteps并设置模型属性
+    t_enc = min(int(denoise_strength * ddim_steps), ddim_steps - 1)  # 根据denoise强度计算需要去噪到第几步 [5, 49]随机取
+    z = model.get_first_stage_encoding(model.encode_first_stage(img))  #? 是不是表示img -> x0
+    z_enc = ddim_sampler.stochastic_encode(z, torch.tensor([t_enc] * num_samples).to(model.device))  # 给定x0和t 生成加噪的x_t
+
+    model.control_scales = [strength * (0.825 ** float(12 - i)) for i in range(13)] if guess_mode else ([strength] * 13)
+    # Magic number. IDK why. Perhaps because 0.825**12<0.01 but 0.826**12>0.01
+
+    #? x_hat = D(x_t, encoded(img))
+    samples = ddim_sampler.decode(z_enc, cond, t_enc, unconditional_guidance_scale=scale, unconditional_conditioning=un_cond)
+
+    x_samples = model.decode_first_stage(samples)  #? 是不是表示x_t -> image_t
+    x_samples = (einops.rearrange(x_samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().clip(0, 255).astype(np.uint8)  # 得到生成出来的图片
+
+    results = [x_samples[i] for i in range(num_samples)]  # only 1 image
+
+
+    alphas = ddim_sampler.alphas_cumprod.cuda()
+    sds_w = (1 - alphas[t_enc]).view(-1, 1)  #? 是不是noise-level modulated weighting function [1, 1]
+
+    return results, sds_w
+
+
+def compute_tv_norm(values: torch.Tensor, losstype='l2') -> torch.Tensor:  # 用于计算 Depth 图的Total Variation Loss 也就是总变分损失
+    v00 = values[:, :-1, :-1]
+    v01 = values[:, :-1, 1:]
+    v10 = values[:, 1:, :-1]
+
+    if losstype == 'l2':
+        loss = ((v00 - v01) ** 2) + ((v00 - v10) ** 2)
+    elif losstype == 'l1':
+        loss = torch.abs(v00 - v01) + torch.abs(v00 - v10)
+    else:
+        raise ValueError('Not supported losstype.')
+    return loss
+
+
+def load_ply(path,save_path):
+    C0 = 0.28209479177387814
+    def SH2RGB(sh):
+        return sh * C0 + 0.5
+    plydata = PlyData.read(path)
+
+    xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
+                    np.asarray(plydata.elements[0]["y"]),
+                    np.asarray(plydata.elements[0]["z"])),  axis=1)
+
+    features_dc = np.zeros((xyz.shape[0], 3, 1))
+    features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
+    features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
+    features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
+    color = SH2RGB(features_dc[:,:,0])
+
+    point_cloud = o3d.geometry.PointCloud()
+    point_cloud.points = o3d.utility.Vector3dVector(xyz)
+    point_cloud.colors = o3d.utility.Vector3dVector(color)
+    o3d.io.write_point_cloud(save_path, point_cloud)
+
+
+def storePly(path, xyz, rgb):
+    # Define the dtype for the structured array
+    dtype = [('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
+            ('nx', 'f4'), ('ny', 'f4'), ('nz', 'f4'),
+            ('red', 'u1'), ('green', 'u1'), ('blue', 'u1')]
+    
+    normals = np.zeros_like(xyz)
+
+    elements = np.empty(xyz.shape[0], dtype=dtype)
+    attributes = np.concatenate((xyz, normals, rgb), axis=1)
+    elements[:] = list(map(tuple, attributes))
+
+    # Create the PlyData object and write to file
+    vertex_element = PlyElement.describe(elements, 'vertex')
+    ply_data = PlyData([vertex_element])
+    ply_data.write(path)
+
+
+def fetchPly(path):
+    plydata = PlyData.read(path)
+    vertices = plydata['vertex']
+    positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
+    try:
+        colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
+    except:
+        sh = np.random.random((vertices.count, 3)) / 255.0
+        colors = SH2RGB(sh)
+    try:
+        normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    except:
+        normals = np.zeros_like(positions)
+    return BasicPointCloud(points=positions, colors=colors, normals=normals)
+    
+
+@threestudio.register("gaussian-object-system")
+class GaussianDreamer(BaseLift3DSystem):  #? 具体的去噪模型
+    """
+    from GaussianObject/threestudio/systems/base.py
+    def __init__(self, cfg, resumed=False) -> None:
+        super().__init__()
+        self.cfg = parse_structured(self.Config, cfg)
+        self._save_dir: Optional[str] = None
+        self._resumed: bool = resumed
+        self._resumed_eval: bool = False
+        self._resumed_eval_status: dict = {"global_step": 0, "current_epoch": 0}
+
+        self.configure()
+        if self.cfg.weights is not None:
+            print("=================== Loading weights ===================")
+            self.load_weights(self.cfg.weights, self.cfg.weights_ignore_modules)
+        self.post_configure()
+
+    """
+    @dataclass
+    class Config(BaseLift3DSystem.Config):
+        sparse_num: int = 5
+        model_name: str = "control_v11f1e_sd15_tile"
+        exp_name: str = ""
+        lora_name: str = "lora-step=1799.ckpt"
+        lora_rank: int = 64
+        add_diffusion_lora: bool = True
+        add_control_lora: bool = True
+        add_clip_lora: bool = True
+        around_gt_steps: int = 0  # 2800
+        scene_extent: float = 5.0
+        min_strength: float = 0.1
+        max_strength: float = 1.0
+        novel_image_size: int = 512
+        refresh_interval: int = 100
+        refresh_size: int = 20  # 8
+        controlnet_num_samples: int = 1  # 1
+        sh_degree: int = 2
+
+        ctrl_steps: int = 1000  # 2800
+        ctrl_loss_ratio_begin: float = 1.0
+        ctrl_loss_ratio_final: float = 0.5
+
+    cfg: Config
+    def configure(self) -> None:
+        # 初始化设置
+        self.gaussian = GaussianModel(sh_degree = self.cfg.sh_degree)
+        self.cameras_extent = self.cfg.scene_extent
+        self.bg_color = [1, 1, 1] if True else [0, 0, 0]
+        self.background_tensor = torch.tensor(self.bg_color, dtype=torch.float32, device="cuda")
+        self.init_dreamer = self.cfg.init_dreamer
+        self.point_cloud = self.init_pointcloud(self.init_dreamer)  # 加载训练了10000轮的CoarseGS
+
+        # metrics
+        self.psnr = PSNR().to("cuda")
+        self.ssim = SSIM().to("cuda")
+        self.lpips = LPIPS('vgg').to("cuda")
+        self.lpips_loss = LPIPS('vgg').to("cuda")
+
+        # data type align
+        self.pil_to_tensor = ToTensor()
+        self.tensor_to_pil = ToPILImage()
+
+        # controlnet cache
+        self.controlnet_outs: List[torch.Tensor] = []
+        self.sds_ws: List[torch.Tensor] = []
+        self.all_T: torch.Tensor = torch.zeros((0, 3))
+        self.max_cam_dis: float = 0.
+
+        # clip model
+        self.clip_model, self.clip_preprocess = clip.load('ViT-B/32', device=self.device)
+        self.gt_features_all = []
+
+        # lr scheduler
+        self.novel_image_size = self.cfg.novel_image_size
+        self.ctrl_steps = self.cfg.ctrl_steps
+        self.ctrl_loss_ratio_begin = self.cfg.ctrl_loss_ratio_begin
+        self.ctrl_loss_ratio_final = self.cfg.ctrl_loss_ratio_final
+        self.ctrl_loss_ratio = self.ctrl_loss_ratio_begin
+
+
+    def save_gif_to_file(self, images, output_file):  
+        with io.BytesIO() as writer:  
+            images[0].save(  
+                writer, format="GIF", save_all=True, append_images=images[1:], duration=100, loop=0  
+            )  
+            writer.seek(0)  
+            with open(output_file, 'wb') as file:  
+                file.write(writer.read())
+
+
+    def update_learning_rate(self):
+        if self.global_step < self.ctrl_steps:
+            self.ctrl_loss_ratio = self.ctrl_loss_ratio_begin + (self.ctrl_loss_ratio_final - self.ctrl_loss_ratio_begin) * self.global_step / self.ctrl_steps
+        else:
+            self.ctrl_loss_ratio = 0.0
+        self.log("train/ctrl_loss_ratio", self.ctrl_loss_ratio)
+
+
+    def cal_loss(self, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_type="bce", mono_loss_type="mid"):
+        """
+        Calculate the loss of the image, contains l1 loss and ssim loss.
+        l1 loss: Ll1 = l1_loss(image, gt_image)
+        ssim loss: Lssim = 1 - ssim(image, gt_image)
+        Optional: [silhouette loss, monodepth loss]
+        """
+        gt_image = viewpoint_cam.original_image.to(image.dtype).cuda()
+        if self.opt.random_background:
+            gt_image = gt_image * viewpoint_cam.mask + bg[:, None, None] * (1 - viewpoint_cam.mask).squeeze()
+        Ll1 = torch.nan_to_num(l1_loss(image, gt_image))
+        loss = (1.0 - self.opt.lambda_dssim) * Ll1 + self.opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+
+        # 轮廓损失
+        if silhouette_loss_type == "bce":
+            silhouette_loss = torch.nan_to_num(F.binary_cross_entropy(render_pkg["rendered_alpha"][0], viewpoint_cam.mask))
+        elif silhouette_loss_type == "mse":
+            silhouette_loss = torch.nan_to_num(F.mse_loss(render_pkg["rendered_alpha"][0], viewpoint_cam.mask))
+        else:
+            raise NotImplementedError
+        loss = loss + self.opt.lambda_silhouette * silhouette_loss
+
+        if hasattr(viewpoint_cam, "mono_depth") and viewpoint_cam.mono_depth is not None:
+            if mono_loss_type == "mid":
+                # we apply masked monocular loss
+                gt_mask = torch.where(viewpoint_cam.mask > 0.5, True, False)
+                render_mask = torch.where(render_pkg["rendered_alpha"][0] > 0.5, True, False)
+                mask = torch.logical_and(gt_mask, render_mask)
+                if mask.sum() < 10:
+                    depth_loss = 0.0
+                else:
+                    disp_mono = 1 / viewpoint_cam.mono_depth[mask].clamp(1e-6) # shape: [N]
+                    disp_render = 1 / render_pkg["rendered_depth"][0][mask].clamp(1e-6) # shape: [N]
+                    depth_loss = monodisp(disp_mono, disp_render, 'l1')[-1]
+            elif mono_loss_type == "pearson":
+                zoe_depth = viewpoint_cam.mono_depth[viewpoint_cam.mask > 0.5].clamp(1e-6)
+                rendered_depth = render_pkg["rendered_depth"][0][viewpoint_cam.mask > 0.5].clamp(1e-6)
+                depth_loss = torch.nan_to_num(min(
+                    (1 - pearson_corrcoef( -zoe_depth, rendered_depth)),
+                    (1 - pearson_corrcoef(1 / (zoe_depth + 200.), rendered_depth))
+                ))
+            else:
+                raise NotImplementedError
+
+            loss = loss + args.mono_rate * depth_loss
+
+        else:
+            depth_loss = 0.
+
+        return {
+            'loss': loss,
+            'l1_loss': Ll1,
+            'ssim_loss': 1.0 - ssim(image, gt_image),
+            'silhouette_loss': silhouette_loss,
+            'depth_loss': depth_loss
+        }
+
+
+    def render_gs(self, batch: Dict[str, Any], renderbackground=None, need_loss=False) -> Dict[str, Any]:
+        if renderbackground is None:
+            renderbackground = torch.rand((3), device="cuda") if self.opt.random_background else self.background_tensor
+
+        images, depths, alphas = [], [], []
+        self.viewspace_point_list, self.radii = [], None # register one empty list for each image rendered
+        loss_all = {
+            'loss': 0.,
+            'l1_loss': 0.,
+            'ssim_loss': 0.,
+            'silhouette_loss': 0.,
+            'depth_loss': 0.
+        }
+        for id in range(batch['index'].shape[0]):  #NOTE 训练时候是一张 但是测试模式下就是一堆了
+            viewpoint_cam = Render_Camera(
+                batch['R'][id],
+                batch['T'][id],
+                batch['fovx'][id],
+                batch['fovy'][id],
+                batch['image'][id],
+                batch['mask'][id],
+                batch['depth'][id],
+                white_background = (self.bg_color == [1, 1, 1])
+            )  # 就是一个相机的初始化而已 包括内外参数和mask, depth, bg_color
+            render_pkg = render(viewpoint_cam, self.gaussian, self.pipe, renderbackground)
+            self.viewspace_point_list.append(render_pkg["viewspace_points"])  # 高斯球点数
+            self.radii = render_pkg["radii"] if id == 0 else torch.max(render_pkg["radii"], self.radii)
+            images.append(render_pkg["render"]) # CHW
+            depths.append(render_pkg["rendered_depth"][0])
+            alphas.append(render_pkg["rendered_alpha"][0])
+            if need_loss:
+                loss = self.cal_loss(self.opt, render_pkg["render"], render_pkg, viewpoint_cam, renderbackground)
+                for k, v in loss.items():
+                    loss_all[k] += v
+        self.visibility_filter = self.radii > 0.0 # update visibility filter
+        return {
+            "images": torch.stack(images, 0),
+            "depths": torch.stack(depths, 0),
+            "alphas": torch.stack(alphas, 0),
+            "loss": loss_all
+        }
+
+
+    def on_fit_start(self) -> None:  # Called at the very beginning of fit.
+        super().on_fit_start()
+        self.controlnet = create_model(f'models/{self.cfg.model_name}.yaml').cpu()
+        self.controlnet.load_state_dict(load_state_dict('models/v1-5-pruned.ckpt', location='cuda'), strict=False)
+        self.controlnet.load_state_dict(load_state_dict(f'models/{self.cfg.model_name}.pth', location='cuda'), strict=False)
+        lora_config = {
+            nn.Embedding: {
+                "weight": partial(LoRAParametrization.from_embedding, rank=self.cfg.lora_rank)
+            },
+            nn.Linear: {
+                "weight": partial(LoRAParametrization.from_linear, rank=self.cfg.lora_rank)
+            },
+            nn.Conv2d: {
+                "weight": partial(LoRAParametrization.from_conv2d, rank=self.cfg.lora_rank)
+            }
+        }
+        if self.cfg.add_diffusion_lora:
+            for name, module in self.controlnet.model.diffusion_model.named_modules():
+                if name.endswith('transformer_blocks'):
+                    add_lora(module, lora_config=lora_config)
+        if self.cfg.add_control_lora:
+            for name, module in self.controlnet.control_model.named_modules():
+                if name.endswith('transformer_blocks'):
+                    add_lora(module, lora_config=lora_config)
+        if self.cfg.add_clip_lora:
+            add_lora(self.controlnet.cond_stage_model, lora_config=lora_config)
+        # 从controlnet_finetune文件中加载出训练好的LoRA的预训练参数
+        self.controlnet.load_state_dict(load_state_dict(f'{self.cfg.exp_name}/ckpts-lora/{self.cfg.lora_name}', location='cuda'), strict=False)
+        self.controlnet = self.controlnet.cuda()
+        self.ddim_sampler = DDIMSampler(self.controlnet)
+
+    def get_dis_from_ts(self, T):
+        return torch.sort(torch.sqrt(torch.sum((T - self.all_T) ** 2, dim=-1)))[0]
+
+
+    def get_random_view_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
+        focal_length_x = fov2focal(batch['fovx'], batch['width'])
+        focal_length_y = fov2focal(batch['fovy'], batch['height'])
+        return {
+            'index': batch['random_index'],
+            'R': batch['random_R'],
+            'T': batch['random_T'],
+            'height': torch.tensor([self.novel_image_size]),
+            'width': torch.tensor([self.novel_image_size]),
+            'fovx': torch.tensor([focal2fov(focal_length_x, self.novel_image_size)]),
+            'fovy': torch.tensor([focal2fov(focal_length_y, self.novel_image_size)]),
+            'image': torch.zeros((batch['image'].shape[0], batch['image'].shape[1], self.novel_image_size, self.novel_image_size), device=batch['image'].device),
+            'mask': torch.zeros((batch['mask'].shape[0], self.novel_image_size, self.novel_image_size), device=batch['mask'].device),
+            'depth': torch.zeros((batch['depth'].shape[0], self.novel_image_size, self.novel_image_size), device=batch['depth'].device),
+            'txt': batch['txt']
+        }
+
+    def training_step(self, batch, batch_idx):  # 一个training_step就是在训练一个batch
+        if self.max_cam_dis == 0.:
+            Ts = batch['gt_Ts']  # sparse_train: 4 Ts
+            self.all_T = torch.cat(Ts)
+            for T in Ts:
+                distances = self.get_dis_from_ts(T)  # 计算当前cam_position和其他所有cam_position的距离 然后返回一个升序排列的distances
+                self.max_cam_dis = max(self.max_cam_dis, distances[2].cpu().item())  #? 为什么计算第三小的距离？
+            # TODO: magic number here
+            self.max_cam_dis *= 1.2  #?
+
+        # 开始利用随机位姿生成图片 random_poses: (refresh_size,) -> controlnet_outs[image]: (refresh_size, CHW), sds_ws[sds_w]: (refresh_size, timesteps)
+        # use cached image for optimization at the beginning of every 200 iters, and use them to repair CoarseGS
+        if self.global_step % self.cfg.refresh_interval == 0 and self.global_step <= self.cfg.around_gt_steps and self.global_step < self.ctrl_steps:
+            # 只在特定的几个轮次执行: [%200 && <2800]: [0, 200, 400, ..., 2600]
+            # 因为不能重复生成同一批随机位姿作为条件的图片 也就是一批refresh_size的随机位姿只能生成refresh_size张图片
+            if self.global_step > 0:
+                for idx, controlnet_out in enumerate(self.controlnet_outs):
+                    if controlnet_out is None:
+                        controlnet_out = torch.zeros((1, 3, self.novel_image_size, self.novel_image_size), device='cuda')
+                        self.controlnet_outs[idx] = controlnet_out
+                # 只要(开始训练了 && %200 && < 2800)就会画图并保存controlnet出来的图片
+                # 以下是画图操作
+                controlnet_outs_image = make_grid(torch.cat(self.controlnet_outs, dim=0), nrow=5)
+                save_image(controlnet_outs_image, self.get_save_path(f"controlnet_out/it{self.true_global_step}.png"))
+            self.controlnet_outs = []
+            if self.global_step < self.cfg.around_gt_steps:  # 在2800轮次之前都执行
+                if len(self.gt_features_all) == 0:  # 先把sparse_train用CLIP编码
+                    for gt_image in batch['gt_images']:
+                        with torch.no_grad():
+                            gt_features = self.clip_model.encode_image(self.clip_preprocess(self.tensor_to_pil(gt_image[0])).unsqueeze(0).to(self.device))
+                        self.gt_features_all.append(gt_features)
+                for R, T in batch['random_poses']:  # 长度为refresh_size的away_from_gt随机位姿
+                    controlent_batch = batch.copy()
+                    controlent_batch['random_R'] = R
+                    controlent_batch['random_T'] = T
+                    controlent_batch = self.get_random_view_batch(controlent_batch)  # 利用随机位姿构造一个和样本focal, img_size完全一致的空的image, mask, depth图
+                    render_results = self.render_gs(controlent_batch, renderbackground=self.background_tensor, need_loss=False)  # 渲染出对应视角的图片并返回 此时空图片被当作是GT
+                    images = render_results['images']  # 拿到不空的图片images 也就是当前GS渲染出来的新随机位姿的视角的图片
+                    image = images[0]
+                    image_np = np.array(self.tensor_to_pil(image))  # 转为np数组
+                    denoise_strength = random.random() * (self.cfg.max_strength - self.cfg.min_strength) + self.cfg.min_strength  #? 算denoise强度
+                    controlnet_outs, sds_w = process(
+                        self.controlnet,
+                        self.ddim_sampler,
+                        image_np,
+                        prompt = batch['txt'][0],
+                        a_prompt = 'best quality',
+                        n_prompt = 'blur, lowres, bad anatomy, bad hands, cropped, worst quality',
+                        num_samples = self.cfg.controlnet_num_samples,
+                        image_resolution = min(image_np.shape[0], image_np.shape[1]),
+                        ddim_steps = 50,
+                        guess_mode = False,
+                        strength = 1.0,
+                        scale = 1.0,
+                        eta = 1.0,
+                        denoise_strength = denoise_strength
+                    )  # 返回由images去噪后的一系列图片和时间步数权重
+
+                    #NOTE 本来就只有一张图片 这样子挑最好的属于是多此一举
+                    best_controlnet_out = controlnet_outs[0]
+                    best_controlnet_out_score = 0.
+                    for controlnet_out in controlnet_outs:
+                        with torch.no_grad():
+                            image_features = self.clip_model.encode_image(self.clip_preprocess(Image.fromarray(controlnet_out)).unsqueeze(0).to(self.device))
+                        score = sum([torch.cosine_similarity(image_features, gt_features, dim=-1).mean() for gt_features in self.gt_features_all])
+                        if score > best_controlnet_out_score:
+                            best_controlnet_out = controlnet_out
+                            best_controlnet_out_score = score
+                    self.controlnet_outs.append(self.pil_to_tensor(best_controlnet_out).to(torch.float32).unsqueeze(0).cuda())  # 拿到最好的那一张图片
+                    self.sds_ws.append(sds_w)  # 一组随着时间变化的cumprod 每一组的每一张的去噪图片都有自己的noise-level modulated weighting值
+
+        ####################################################################################################
+        # 所有轮次都会执行的步骤:
+        self.gaussian.update_learning_rate(self.true_global_step)
+
+        render_results = self.render_gs(batch, need_loss=True)  # 返回四张稀疏视角的渲染结果 并计算现在的高斯球模型渲染出来的稀疏视角和稀疏视角GT的差值作为损失值
+
+        # 下面得到的损失值是稀疏视角的损失值
+        for k, v in render_results['loss'].items():
+            self.log(f"system_always_retrain/{k}", v)  # 'loss', 'l1_loss', 'ssim_loss', 'silhouette_loss', 'depth_loss'
+
+        gs_loss = render_results['loss']['loss']  # 只要'loss'那一项 其实就是带权总和
+        self.log("system_always_retrain/weighted_gs_loss", gs_loss)
+
+        ctrl_loss = 0.  # Loss_rep in eq.12
+        if self.ctrl_loss_ratio > 0.0:  # 在第2801轮次时就不再执行 因为在self.update_learning_rate的函数里面置成0了: with first 2800 steps supervised by Lrep and Lgs together
+            batch = self.get_random_view_batch(batch)  # 随机位姿生成的新的batch
+
+            # 拿到随机视角下CoarseGS渲染出来的图片
+            render_results = self.render_gs(batch, renderbackground=self.background_tensor, need_loss=False)  # 渲染出来随机位姿对应下的图片
+            images = render_results['images']  # CoarseGS渲染出来的图片
+
+            controlnet_outs = []
+            sds_ws = []
+            if self.global_step < self.cfg.around_gt_steps:  # < 2800 执行
+                for idx, image in enumerate(images):
+                    cached_controlnet_out = self.controlnet_outs[batch['index'][idx]]
+                    if cached_controlnet_out is not None:
+                        # 在[0]steps的时候上面就开始随机denoise生成了
+                        # 拿到根据GT图像和随机位姿生成的经过DDIM的去噪图片 以及 包含时间节点的sds_w
+                        controlnet_out = cached_controlnet_out
+                        sds_w = self.sds_ws[batch['index'][idx]]
+                    else:
+                        #NOTE 因为上面一开始就已经生成cached_controlnet_out了 所以这一步一定不会执行 一定不为空 如果这一步执行了 那么就是直接按照最强的强度去噪
+                        #NOTE 这里开始重新生成 唯一的区别是denoise_strength直接是最高值 而200轮次之后执行上面的生成的时候denoise_strength是随机值
+                        #? 也就是一开始需要强去噪 后面训练的好一点了可以随机去噪了
+                        image_np = np.array(self.tensor_to_pil(image))
+                        denoise_strength = self.cfg.max_strength
+                        controlnet_out, sds_w = process(
+                            self.controlnet,
+                            self.ddim_sampler,
+                            image_np,
+                            prompt = batch['txt'][idx],
+                            a_prompt = 'best quality',
+                            n_prompt = 'blur, lowres, bad anatomy, bad hands, cropped, worst quality',
+                            num_samples = 1,
+                            image_resolution = min(image_np.shape[0], image_np.shape[1]),
+                            ddim_steps = 50,
+                            guess_mode = False,
+                            strength = 1.0,
+                            scale = 1.0,
+                            eta = 1.0,
+                            denoise_strength = denoise_strength
+                        )
+                        controlnet_out = self.pil_to_tensor(controlnet_out).to(torch.float32).unsqueeze(0).cuda()
+                        self.controlnet_outs[batch['index'][idx]] = controlnet_out
+                        self.sds_ws[batch['index'][idx]] = sds_w
+                    controlnet_outs.append(controlnet_out)
+                    sds_ws.append(sds_w)
+            else:  # 在且仅在第2800轮次时候最后执行一次 也不再使用上面的任何一步生成的图片了 开始自己生成图片
+                for idx, image in enumerate(images):
+                    image_np = np.array(self.tensor_to_pil(image))
+                    denoise_strength = random.random() * (self.cfg.max_strength - self.cfg.min_strength) + self.cfg.min_strength
+                    controlnet_samples, sds_w = process(
+                        self.controlnet,
+                        self.ddim_sampler,
+                        image_np,
+                        prompt = batch['txt'][idx],
+                        a_prompt = 'best quality',
+                        n_prompt = 'blur, lowres, bad anatomy, bad hands, cropped, worst quality',
+                        num_samples = self.cfg.controlnet_num_samples,
+                        image_resolution = min(image_np.shape[0], image_np.shape[1]),
+                        ddim_steps = 50,
+                        guess_mode = False,
+                        strength = 1.0,
+                        scale = 1.0,
+                        eta = 1.0,
+                        denoise_strength = denoise_strength
+                    )
+                    best_controlnet_out = controlnet_samples[0]
+                    best_controlnet_out_score = 0.
+                    for controlnet_out in controlnet_samples:  #NOTE 没必要挑出最好的 因为有且仅有一个image
+                        with torch.no_grad():
+                            image_features = self.clip_model.encode_image(self.clip_preprocess(Image.fromarray(controlnet_out)).unsqueeze(0).to(self.device))
+                        score = min([torch.cosine_similarity(image_features, gt_features, dim=-1).mean() for gt_features in self.gt_features_all])
+                        if score > best_controlnet_out_score:
+                            best_controlnet_out = controlnet_out
+                            best_controlnet_out_score = score  # 0.8983
+                    controlnet_outs.append(self.pil_to_tensor(best_controlnet_out).to(torch.float32).unsqueeze(0).cuda())
+                    sds_ws.append(sds_w)
+                if self.global_step % self.cfg.refresh_interval == 0 and self.global_step != self.cfg.around_gt_steps:
+                    #NOTE 因为进入本循环的条件是==2800 这里判断条件又是不等于 所以一定不会执行
+                    controlnet_outs_image = make_grid(torch.cat(controlnet_outs, dim=0), nrow=min(5, len(controlnet_outs)))
+                    save_image(controlnet_outs_image, self.get_save_path(f"controlnet_out/it{self.true_global_step}.png"))
+
+            # 仅在[0, 2800]轮次的时候会执行 因为在第2800轮次的时候这一步先于self.update_learning_rate()执行
+            distances = self.get_dis_from_ts(batch['T'])  # 找到离当前这个随机视角距离最近GT相机
+            distance_weight = min(1., 2 * distances[0].cpu().item() / self.max_cam_dis)  # eq.12: lambda(π_j)
+            self.log("system_train/distance_weight", distance_weight)
+
+            # TODO: only works for batch size 1
+            # TODO: 非常复杂的 eq.12 的损失函数L_rep 不仅仅是每一步计算 貌似self.C是个带权累积的 loss
+            controlnet_outs = torch.cat(controlnet_outs, dim=0)
+            sds_ws = sds_ws[0].cpu().item()  # NOTE: noise-level modulated weighting function
+            self.log("system_train/sds_ws", sds_ws)
+
+            loss_l1 = torch.nan_to_num(l1_loss(controlnet_outs, images))
+            self.log("system_train/loss_l1", loss_l1)
+            ctrl_loss += sds_ws * loss_l1 * self.C(self.cfg.loss['lambda_l1']) * distance_weight
+
+            loss_l2 = torch.nan_to_num(l2_loss(controlnet_outs, images))
+            self.log("system_train/loss_l2", loss_l2)
+            ctrl_loss += sds_ws * loss_l2 * self.C(self.cfg.loss['lambda_l2']) * distance_weight
+
+            loss_lpips = torch.nan_to_num(self.lpips_loss(controlnet_outs, images))
+            self.log("system_train/loss_lpips", loss_lpips)
+            ctrl_loss += sds_ws * loss_lpips * self.C(self.cfg.loss['lambda_lpips']) * distance_weight
+
+            loss_tv = torch.nan_to_num(compute_tv_norm(render_results['depths'], losstype='l2').sqrt().mean())  # Total Variation Loss
+            self.log("system_train/loss_tv", loss_tv)
+            ctrl_loss += sds_ws * loss_tv * self.C(self.cfg.loss['lambda_tv']) * distance_weight
+
+            self.log("system_train/loss", ctrl_loss)  # L_rep
+
+        self.update_learning_rate()  # update ctrl_loss_ratio 在第2800轮次的时候置成0
+        # 最后的repair损失函数是稀疏视角的重建损失和去噪损失叠加
+        loss = gs_loss * (1.0 - self.ctrl_loss_ratio) + ctrl_loss * self.ctrl_loss_ratio  # 此时的ctrl_loss_ratio其实是从1.0下降到0.5 意味着前期去噪图片的约束强于后期
+
+        for name, value in self.cfg.loss.items():
+            self.log(f"system_always_train_params/{name}", self.C(value))
+
+        return {"loss": loss}
+
+
+    def on_before_optimizer_step(self, optimizer):  # call before optimizer.step() 每次更新参数前都根据step执行: densify, prune, reset_opacity, log 操作
+        with torch.no_grad():
+            if self.true_global_step < self.opt.densify_until_iter:  # [0, 6000)
+                viewspace_point_tensor_grad = torch.zeros_like(self.viewspace_point_list[0])
+                for idx in range(len(self.viewspace_point_list)):  # 累积所有高斯球的梯度
+                    viewspace_point_tensor_grad = viewspace_point_tensor_grad + self.viewspace_point_list[idx].grad
+                # Keep track of max radii in image-space for pruning
+                self.gaussian.max_radii2D[self.visibility_filter] = torch.max(self.gaussian.max_radii2D[self.visibility_filter], self.radii[self.visibility_filter])
+                # 更新xyz_gradient_accum和denom 几乎和add_densification_stats一样
+                self.gaussian.add_densification_stats_no_grad(viewspace_point_tensor_grad, self.visibility_filter)
+
+                if self.true_global_step >= self.opt.densify_from_iter and self.true_global_step % self.opt.densification_interval == 0: # >= 400 && % 100
+                    size_threshold = 20 if self.true_global_step > 300 else None # 3000
+                    before_num_gauss = len(self.gaussian._xyz)
+                    if before_num_gauss < self.opt.max_num_splats:  # 小于300w就得densify
+                        self.gaussian.densify(self.opt.densify_grad_threshold, self.cameras_extent)
+                    if before_num_gauss > self.opt.min_num_splats:  # 大于1w就得删点
+                        self.gaussian.prune(self.opt.prune_opacity_threshold, self.cameras_extent, size_threshold)
+                    torch.cuda.empty_cache()
+                    after_num_gauss = len(self.gaussian._xyz)
+                    threestudio.info(f'threestudio/systems/gaussian_object_system.py: Run densification at step: {self.true_global_step}, before: {before_num_gauss}, after: {after_num_gauss}, delta: {after_num_gauss - before_num_gauss}')
+                    self.log('gaussian/num_gauss', torch.tensor(after_num_gauss, dtype=torch.float32))
+                if self.true_global_step > 0 and self.true_global_step % self.opt.opacity_reset_interval == 0:  # 1000轮随机置0
+                    self.gaussian.reset_opacity()
+
+
+    def on_train_epoch_end(self):  # Called in the training loop at the very end of the epoch 每轮迭代结束进行save last.ply
+        print(STR_STAGE, f"saving last.ply when calling on_train_epoch_end in {self.current_epoch} epoch and {self.true_global_step} true_global_step")
+        save_path = self.get_save_path(f"last.ply")
+        self.gaussian.save_ply(save_path)
+
+
+    def configure_optimizers(self):  # Choose what optimizers and learning-rate schedulers to use in your optimization.
+        self.parser = ArgumentParser(description="Training script parameters")
+        self.opt = OptimizationParams(self.parser)
+        for k, v in self.cfg.gaussian_opt_params.items():
+            self.opt.__setattr__(k, v)
+        self.pipe = PipelineParams(self.parser)
+        self.gaussian.training_setup(self.opt)
+        ret = {
+            "optimizer": self.gaussian.optimizer,
+        }
+        return ret
+
+
+    def init_pointcloud(self, path):
+        # path = "output/gs_init/kitchen" from CoarseGS
+        if path == 'random':
+            pcb = self.pcb()
+            self.gaussian.create_from_pcd(pcb, self.cameras_extent)
+            return self.pcb()
+        max_num = 0
+        ply_path = ''
+        for it in os.listdir(os.path.join(path, 'point_cloud')):
+            if not os.path.isdir(os.path.join(path, 'point_cloud', it)):
+                continue
+            num = int(it.split('_')[-1])
+            if num > max_num:   # find the max iteration
+                max_num = num
+                ply_path = os.path.join(path, 'point_cloud', it, 'point_cloud.ply')
+        threestudio.info(f'threestudio/systems/gaussian_object_system.py: init ply file from iter {max_num} in path {ply_path}')
+
+        self.point_cloud = fetchPly(ply_path)
+        self.num_pts = self.point_cloud.points.shape[0]
+        self.gaussian.load_ply(ply_path)  # init from CoarseGS which has been trained 10000 iters
+        self.gaussian.update_spatial_lr_scale(self.cameras_extent)
+        return self.point_cloud
