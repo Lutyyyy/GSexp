@@ -176,7 +176,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, extra_opts=None):
         test_cam_infos = []
 
     #NOTE 原始3DGS并没有生成环形相机位姿这一步
-    render_cam_infos = generate_ellipse_path_from_camera_infos(cam_infos)  # 生成环形的相机位姿的场景信息
+    render_cam_infos = generate_ellipse_path_from_camera_infos(cam_infos)  # 生成固定的120个环形的相机位姿的场景信息
 
     nerf_normalization = getNerfppNorm(train_cam_infos)  # 求出相机中心和对角线
 
@@ -198,6 +198,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, extra_opts=None):
         pcd = None
 
     if hasattr(extra_opts, 'sparse_view_num') and extra_opts.sparse_view_num > 0: # means sparse setting
+        # 如果有稀疏视角的设置 直接从文件读出来train和test的相机参数
         #NOTE since it is -1, so this will also not be executed
         #NOTE But when training GS, this will be executed!!
         assert eval == False

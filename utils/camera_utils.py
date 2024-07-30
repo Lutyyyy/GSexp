@@ -457,7 +457,7 @@ def generate_ellipse_path_from_camera_infos(
         z_variation: float = 0.,
         z_phase: float = 0.
     ) -> List[CameraInfo]:
-    print(STR_STAGE, f'In utils/camera_utisl.py: Generating ellipse path from {len(cam_infos)} camera infos ...')
+    print(STR_STAGE, f'In utils/camera_utisl.py: Generating ellipse path from {len(cam_infos)} render cameras infos ...')
     poses = np.array([np.linalg.inv(getWorld2View2(cam_info.R, cam_info.T))[:3, :4] for cam_info in cam_infos])
     poses[:, :, 1:3] *= -1  # YZ轴反向 为的是下面变换位姿到标准空间然后找相机的焦点点
     poses, transform, scale_factor = transform_poses_pca(poses)  # 变换相机位姿到标准空间

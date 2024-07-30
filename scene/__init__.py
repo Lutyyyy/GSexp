@@ -86,12 +86,12 @@ class Scene:
             init_time = time.time()
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args, mode="train")
             init_time2 = time.time()
-            print(STR_STAGE, "Loading training cameras with {}s".format(init_time2 - init_time))
+            print(STR_STAGE, "Loading training cameras with {}s for {} cameras".format(init_time2 - init_time, len(self.train_cameras[resolution_scale])))
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
             init_time3 = time.time()
-            print(STR_STAGE, "Loading test cameras with {}s".format(time.time() - init_time2))
+            print(STR_STAGE, "Loading test cameras with {}s for {} cameras".format(time.time() - init_time2, len(self.test_cameras[resolution_scale])))
             self.render_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.render_cameras, resolution_scale, args)
-            print(STR_STAGE, "Loading render cameras with {}s".format(time.time() - init_time3))
+            print(STR_STAGE, "Loading render cameras with {}s for {} cameras".format(time.time() - init_time3, len(self.render_cameras[resolution_scale])))
 
         # 加载或创建高斯模型
         if self.loaded_iter:
