@@ -83,7 +83,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()  # 每1000次迭代增加球谐函数系数
 
-        # Pick a random Camera 随机选择一个训练相机
+        # Pick a random Camera 随机选择一个训练相机 也就是说每次forward-backward都只有一张图片参与
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
@@ -183,7 +183,6 @@ def prepare_output_and_logger(args):
     return tb_writer
 
 def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
-    #TODO: add depth loss result
     result = {
         'train_loss_patches/l1_loss': Ll1.item(),  # 和cal_loss函数中画图的数值一样 因为就是直接传进去的
         'train_loss_patches/depth_loss': depth_loss.item(), # 和cal_loss函数中画图的数值一样 因为就是直接传进去的
@@ -279,9 +278,13 @@ def cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_ty
     Ll1 = l1_loss(image, gt_image)
     Lssim = (1.0 - ssim(image, gt_image))
     loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * Lssim
+
+    training_psnr = psnr(image, gt_image).mean().double()
+
     if tb_writer is not None:
         tb_writer.add_scalar('training_loss/l1_loss', Ll1, iteration)
         tb_writer.add_scalar('training_loss/ssim_loss', Lssim, iteration)
+        tb_writer.add_scalar('training_metrics/psnr', training_psnr, iteration)
 
     if hasattr(args, "use_mask") and args.use_mask:
         if silhouette_loss_type == "bce":
