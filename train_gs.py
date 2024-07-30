@@ -101,7 +101,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
         # Loss
         loss, Ll1 , depth_loss = cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, tb_writer=tb_writer, iteration=iteration)  # 返回初始的l1_loss和总的loss
 
-        loss.backward()
+        loss.backward()  #NOTE 在执行这一步之前 所有的求梯度的操作比如.grad操作都是不可access的 因为这一步backward就是回传所有梯度
         iter_end.record()
 
         with torch.no_grad():
