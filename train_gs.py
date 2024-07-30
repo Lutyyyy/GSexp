@@ -96,6 +96,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        # visibility_filter = radii > 0
 
         # Loss
         loss, Ll1 , depth_loss = cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, tb_writer=tb_writer, iteration=iteration)  # 返回初始的l1_loss和总的loss

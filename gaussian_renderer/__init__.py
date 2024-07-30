@@ -89,7 +89,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     # rendered_image: [3, 520, 779]
     # rendered_depth: [1, 520, 779]
     # rendered_alpha: [1, 520, 779]
-    # raddi: [6w+] 元素数量逐步递增的一维tensor 数量等于高斯球数量
+    # raddi: [6w+] 表示每个高斯球在2D平面上投影的半径大小 元素数量逐步递增的一维tensor 数量等于高斯球数量
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
