@@ -14,7 +14,6 @@ import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
-from utils.util_print import STR_ERROR
 
 
 def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0, override_color=None):
@@ -87,6 +86,10 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     rendered_image, radii, rendered_depth, rendered_alpha = rasterizer(  # 额外返回渲染的深度和权重
         means3D=means3D, means2D=means2D, shs=shs, colors_precomp=colors_precomp, opacities=opacity, scales=scales, rotations=rotations, cov3D_precomp=cov3D_precomp
     )
+    # rendered_image: [3, 520, 779]
+    # rendered_depth: [1, 520, 779]
+    # rendered_alpha: [1, 520, 779]
+    # raddi: [6w+] 元素数量逐步递增的一维tensor 数量等于高斯球数量
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
