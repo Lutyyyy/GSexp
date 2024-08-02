@@ -87,6 +87,7 @@ class OptimizationParams(ParamGroup):
         self.opacity_reset_interval = 1000 # [default 3000] Decrease all opacities (alpha) close to zero -> algo will automatically increase opacities again for important gaussians -> cull the rest
         self.remove_outliers_interval = 500 # [default 500]
         self.densify_from_iter = 500 # [default 500] After this many iterations, start densifying
+        #NOTE 注意这里即使修改了opt.iteration还是不会变 因为修改前这里就定下来了 所以要直接修改opt.densify_until_iter才行
         self.densify_until_iter = int(0.6 * self.iterations) # [default 15_000] Decrease this to avoid running out of memory (after this many iterations, stop densifying)
         self.densify_grad_threshold = 0.0002 # [default 0.0002; Section 5.2: tau_pos] Increase this to avoid running out of memory. If very high, no densification will occur
         self.start_sample_pseudo = 400000 # not use
