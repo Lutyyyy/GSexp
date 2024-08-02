@@ -54,7 +54,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
-    viewpoint_stack, augview_stack = None, None
+    viewpoint_stack, augview_stack = None, None  # TODO: how to use augview
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -144,7 +144,8 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
                 scene.save(iteration)  # scene的保存仅仅是保存下来ply文件 没有高斯球的训练状态和梯度信息
 
             # Densification  在一定的迭代次数内进行密集化处理 本文为了节省内存调低成60% 也就是60%后不再densitify操作
-            if iteration < opt.densify_until_iter and num_gauss < opt.max_num_splats:  # 在达到迭代次数和高斯数量之前都执行
+            if iteration < opt.densify_until_iter and num_gauss < opt.max_num_splats:  # TODO ablation study
+                # 在达到迭代次数和高斯数量之前都执行
                 # Keep track of max radii in image-space for pruning
                 # 将每个像素位置上的最大半径记录在 max_radii2D 中。这是为了密集化时进行修剪（pruning）操作时的参考
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
@@ -161,6 +162,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
                     gaussians.reset_opacity()
 
                 # 每隔一定迭代次数移除不正确的点
+                #TODO: ablation study
                 if iteration % opt.remove_outliers_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.remove_outliers(opt, iteration, linear=True)
 
