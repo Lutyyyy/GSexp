@@ -105,6 +105,18 @@ class GaussianModel:
                 self._opacity.detach()]
 
     @property
+    def get_scales(self):
+        return self._scaling
+    
+    @property
+    def get_opacities(self):
+        return self._opacity
+
+    @property
+    def get_rotations(self):
+        return self._rotation
+
+    @property
     def get_scaling(self):
         return self.scaling_activation(self._scaling)
     

@@ -100,4 +100,17 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         "radii": radii,
         "rendered_depth": rendered_depth,  # depth
         "rendered_alpha": rendered_alpha,  # acc
+        "input": {
+            "means3D": pc.get_xyz,
+            "opacity": pc.get_opacities,
+            "rotation": pc.get_rotations,
+            "scale": pc.get_scales,
+        },
+        "layer_input": {
+            "layer_means2D": means2D,
+            "layer_means3D": means3D,
+            "layer_opacity": opacity,
+            "layer_rotation": rotations,
+            "layer_scale": scales,
+        },
     }

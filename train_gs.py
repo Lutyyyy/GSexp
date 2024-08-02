@@ -96,12 +96,31 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        input_dict, layer_input_dict = render_pkg["input"], render_pkg["layer_input"]
         # visibility_filter = radii > 0
 
         # Loss
         loss, Ll1 , depth_loss = cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, tb_writer=tb_writer, iteration=iteration)  # 返回初始的l1_loss和总的loss
 
+        layer_grads = {}
+        def save_grad(name):
+            def hook(grad):
+                layer_grads[name] = grad
+            return hook
+        for k, v in layer_input_dict.items():
+            # print(STR_ERROR, k, v.grad_fn)  # add hook for recording the middle nodes' gradient
+            v.register_hook(save_grad(k))
+
         loss.backward()  #NOTE 在执行这一步之前 所有的求梯度的操作比如.grad操作都是不可access的 因为这一步backward就是回传所有梯度
+
+        input_grads = {}
+        for k, v in input_dict.items():
+            input_grads[k] = v.grad
+
+        param_report(input_dict, layer_input_dict, tb_writer, iteration)
+        grads_report(input_grads, layer_grads, tb_writer, iteration)
+        # if not (viewspace_point_tensor.grad is means_2d.grad): print(STR_ERROR, viewspace_point_tensor.grad == means_2d.grad, viewspace_point_tensor.grad is means_2d.grad)
+        # print(STR_WARNING, means_2d.shape, means_2d.grad.shape, means_3d.shape, means_3d.grad.shape)
         iter_end.record()
 
         with torch.no_grad():
@@ -138,6 +157,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
                 
                 # 每隔一定迭代次数或在白色背景数据集上的指定迭代次数时重置不透明度
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                    print(STR_ERROR, f'Resetting Opacity in {iteration}')
                     gaussians.reset_opacity()
 
                 # 每隔一定迭代次数移除不正确的点
@@ -265,6 +285,27 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapse
 
     return result
 
+
+def grads_report(input_grads: dict, layer_grads: dict, tb_writer: Optional[SummaryWriter], iteration=0):
+    # print(STR_VERBOSE, iteration)
+    # for k, v in input_dict.items():
+        # if v.grad is not None: tb_writer.add_scalar(f'training_grads_{k}', v.grad.mean().double(), iteration)
+        # if v.grad is not None: print(k, v.grad.shape)
+
+    for k, v in input_grads.items():
+        tb_writer.add_scalar(f'training_input_grads/{k}_grads', v.mean().double(), iteration)
+   
+    for k, v in layer_grads.items():
+        tb_writer.add_scalar(f'training_layer_grads/{k}_grads', v.mean().double(), iteration)
+
+
+def param_report(input_dict: dict, layer_input_dict: dict, tb_writer: Optional[SummaryWriter], iteration=0):
+    for k, v in input_dict.items():
+        tb_writer.add_scalar(f'training_params/{k}', v.mean().double(), iteration)
+
+    for k, v in layer_input_dict.items():
+        tb_writer.add_scalar(f'training_layer_params/{k}', v.mean().double(), iteration)
+   
 
 def cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_type="bce", mono_loss_type="mid", tb_writer: Optional[SummaryWriter]=None, iteration=0):
     """
