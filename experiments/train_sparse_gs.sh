@@ -7,5 +7,12 @@ python train_gs.py -s data/mip360/kitchen \
     --init_pcd_name visual_hull_4 \
     --white_background --random_background
 "
+# TODO: test sh_degree 4
 echo $cmd
 eval $cmd
+
+
+# r for resolution
+# sparse_view_num for number of views
+# visual_hull_4 is the initial point cloud for sparse_id=4
+# white_background and random_background are for data augmentation
