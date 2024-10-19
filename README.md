@@ -219,3 +219,8 @@ The rendering results are saved in `output/gs_init/kitchen/test/ours_None` and `
 ## Acknowledgement
 
 Some code of GaussianObject is based on [3DGS](https://github.com/graphdeco-inria/gaussian-splatting), [threestudio](https://github.com/threestudio-project/threestudio) and [ControlNet](https://github.com/lllyasviel/ControlNet). Thanks for their great work!
+
+
+## GSinit Exp
+### Method 1
+- Use KNN to initialize Gaussian, based on GS distribution on 2D to guide 3D
