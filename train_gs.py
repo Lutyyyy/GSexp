@@ -135,6 +135,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
                 progress_bar.close()
 
             # Log and save
+            # 记录densify之前的状态 包括高斯球的数量和损失值 以及测试时候才记录的损失值和高斯球不透明度
             results.update({
                 f'{iteration}': training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             })
@@ -283,6 +284,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapse
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)  # 只在测试过程中记录高斯球的不透明度
+            #? 目前没用上?
         torch.cuda.empty_cache()
 
     return result
