@@ -229,4 +229,4 @@ Some code of GaussianObject is based on [3DGS](https://github.com/graphdeco-inri
 ### Exp 1
 - few shot 和 non-few shot 结果对比
  - `kitchen`:
-  - Non-few shot: L1 0.0160362310  PSNR 32.9537
+  - Non-few shot: L1 0.0160362310 | PSNR 32.9537
