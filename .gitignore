@@ -12,3 +12,4 @@ control_v11f1e_sd15_tile.pth
 
 trash/*
 test/*
+.ipynb_checkpoints/
