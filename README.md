@@ -223,6 +223,6 @@ Some code of GaussianObject is based on [3DGS](https://github.com/graphdeco-inri
 
 ## GSinit Exp
 ### Motivation
-* 非`few-shot`版本的GS初始化点数在`10w`量级(`mip360`中的`kitchen`初始化点数是`241367`, `tank&temp`中的`train`182686`), 而`few-shot`的初始化点数只有`1k`量级(`kitchen`中大约是`8000`)
+* 非`few-shot`版本的GS初始化点数在`10w`量级(`mip360`中的`kitchen`初始化点数是`241367`, `tank&temp`中的`train`是`182686`), 而`few-shot`的初始化点数只有`1k`量级(`kitchen`中大约是`8000`量级)
 ### Method 1
 - Use KNN to initialize Gaussian, based on GS distribution on 2D to guide 3D
