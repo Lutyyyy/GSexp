@@ -123,7 +123,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
         # print(STR_WARNING, means_2d.shape, means_2d.grad.shape, means_3d.shape, means_3d.grad.shape)
         iter_end.record()
 
-        with torch.no_grad():
+        with torch.no_grad():  # 在每个训练轮次结束之后 不再需要梯度信息 开始执行不需要梯度信息的操作
             # 记录损失的指数移动平均值，并定期更新进度条
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log

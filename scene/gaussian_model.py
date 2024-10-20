@@ -154,7 +154,7 @@ class GaussianModel:
         features[:, 3:, 1:] = 0.0
 
         from utils.util_print import STR_DEBUG
-        print(STR_DEBUG, "In scene/gaussian_model.py: Number of points at initialisation : ", fused_point_cloud.shape[0])
+        print(STR_DEBUG, "In scene/gaussian_model.py/create_from_pcd: Number of points at initialisation : ", fused_point_cloud.shape[0])
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
@@ -248,6 +248,9 @@ class GaussianModel:
                         np.asarray(plydata.elements[0]["y"]),
                         np.asarray(plydata.elements[0]["z"])),  axis=1)
         opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
+
+        from utils.util_print import STR_DEBUG
+        print(STR_DEBUG, "In scene/gaussian_model.py/load_ply: Number of points at initialisation : ", xyz.shape[0])
 
         features_dc = np.zeros((xyz.shape[0], 3, 1))
         features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
