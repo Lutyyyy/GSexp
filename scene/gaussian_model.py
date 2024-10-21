@@ -160,7 +160,8 @@ class GaussianModel:
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
-
+        
+        # 用 inverse_sigmoid 表达 opacity 是为了增加非线性 该反函数是将概率转为logits 这样网络训练过程用的都是logits而不是一个概率值
         opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
