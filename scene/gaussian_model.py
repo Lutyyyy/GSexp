@@ -423,10 +423,12 @@ class GaussianModel:
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):  # 和原版完全一致
-        grads = self.xyz_gradient_accum / self.denom
+        grads = self.xyz_gradient_accum / self.denom  # 除以某个点的更新次数 为的是求出该点的平均梯度
         grads[grads.isnan()] = 0.0
 
         # densify
+        # 利用平均梯度判断是否超出grad_threshold 可以确保仅对具有一致高梯度的区域（即需要更多细节的区域）进行致密化
+        # 如果基于单个步骤的梯度做出致密化决策，则可能会受到数据中的临时峰值或波动的影响
         self.densify_and_clone(grads, max_grad, extent)
         self.densify_and_split(grads, max_grad, extent)
 
