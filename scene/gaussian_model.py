@@ -506,6 +506,8 @@ class GaussianModel:
         torch.cuda.empty_cache()
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
+        # viewspace_point_tensor是3维度的，取出前两维度就是xy平面上的梯度
+        # z 就是最后一个维度的梯度
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)  # 把所有3D高斯球的梯度加起来求norm
         self.denom[update_filter] += 1
 
