@@ -1,3 +1,5 @@
+from runx.logx import logx
+
 class Bcolors:
     def __init__(self):
         self.HEADER = "\033[95m"
@@ -40,3 +42,4 @@ STR_INFO = bcolors.DARKCYAN + "INFO: " + bcolors.ENDC
 STR_WARNING = bcolors.WARNING + "[Warning]" + bcolors.ENDC
 STR_ERROR = bcolors.FAIL + "[Error]" + bcolors.ENDC
 STR_DEBUG = bcolors.DEBUG + "[Debug...]" + bcolors.ENDC
+logx.initialize(logdir='./trash/test_runx', coolname=False, tensorboard=True)

@@ -30,8 +30,7 @@ from scene import GaussianModel, Scene
 from utils.general_utils import safe_state
 from utils.image_utils import psnr
 from utils.loss_utils import l1_loss, ssim, monodisp
-from utils.util_print import STR_DEBUG, STR_VERBOSE, STR_STAGE, STR_WARNING, STR_ERROR
-
+from utils.util_print import STR_DEBUG, STR_VERBOSE, STR_STAGE, STR_WARNING, STR_ERROR, logx
 
 TENSORBOARD_FOUND = True
 
@@ -160,6 +159,8 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
                 # 每隔一定迭代次数或在白色背景数据集上的指定迭代次数时重置不透明度
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     print(STR_ERROR, f'Resetting Opacity in {iteration}')
+                    logx.msg(STR_ERROR + f'Resetting Opacity in {iteration}')
+
                     gaussians.reset_opacity()
 
                 # 每隔一定迭代次数移除不正确的点
@@ -217,6 +218,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapse
     if tb_writer:
         for k, v in result.items():
             tb_writer.add_scalar(k, v, iteration)
+            logx.add_scalar(k, v, iteration)
         # tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         # tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         # tb_writer.add_scalar('iter_time', elapsed, iteration)
@@ -260,8 +262,10 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapse
                     if tb_writer and (idx < 5):
                         #? 只返回前五个相机的图片?
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+                        logx.add_image(config['name'] + "_view_{}/render".format(viewpoint.image_name), image, iteration)
                         if iteration == testing_iterations[0]:  # 随便挑一个轮次展示GT即可 防止重复展示GT
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                            logx.add_image(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image, iteration)
 
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
@@ -281,9 +285,13 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapse
                     tb_writer.add_scalar(config['name'] + '_camera/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '_camera/loss_viewpoint - psnr', psnr_test, iteration)
                     tb_writer.add_scalar(config['name'] + '_camera/loss_viewpoint - depth', depth_test_loss, iteration)
+                    logx.add_scalar(config['name'] + '_camera/loss_viewpoint - l1_loss', l1_test, iteration)
+                    logx.add_scalar(config['name'] + '_camera/loss_viewpoint - psnr', psnr_test, iteration)
+                    logx.add_scalar(config['name'] + '_camera/loss_viewpoint - depth', depth_test_loss, iteration)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)  # 只在测试过程中记录高斯球的不透明度
+            # logx.add_historgam("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)  #NOTE no this function!
             #? 目前没用上?
         torch.cuda.empty_cache()
 
@@ -298,17 +306,21 @@ def grads_report(input_grads: dict, layer_grads: dict, tb_writer: Optional[Summa
 
     for k, v in input_grads.items():
         tb_writer.add_scalar(f'training_input_grads/{k}_grads', v.mean().double(), iteration)
+        logx.add_scalar(f'training_input_grads/{k}_grads', v.mean().double(), iteration)
    
     for k, v in layer_grads.items():
         tb_writer.add_scalar(f'training_layer_grads/{k}_grads', v.mean().double(), iteration)
+        logx.add_scalar(f'training_layer_grads/{k}_grads', v.mean().double(), iteration)
 
 
 def param_report(input_dict: dict, layer_input_dict: dict, tb_writer: Optional[SummaryWriter], iteration=0):
     for k, v in input_dict.items():
         tb_writer.add_scalar(f'training_params/{k}', v.mean().double(), iteration)
+        logx.add_scalar(f'training_params/{k}', v.mean().double(), iteration)
 
     for k, v in layer_input_dict.items():
         tb_writer.add_scalar(f'training_layer_params/{k}', v.mean().double(), iteration)
+        logx.add_scalar(f'training_layer_params/{k}', v.mean().double(), iteration)
    
 
 def cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_type="bce", mono_loss_type="mid", tb_writer: Optional[SummaryWriter]=None, iteration=0):
@@ -331,6 +343,9 @@ def cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_ty
         tb_writer.add_scalar('training_loss/l1_loss', Ll1, iteration)
         tb_writer.add_scalar('training_loss/ssim_loss', Lssim, iteration)
         tb_writer.add_scalar('training_metrics/psnr', training_psnr, iteration)
+        logx.add_scalar('training_loss/l1_loss', Ll1, iteration)
+        logx.add_scalar('training_loss/ssim_loss', Lssim, iteration)
+        logx.add_scalar('training_metrics/psnr', training_psnr, iteration)
 
     if hasattr(args, "use_mask") and args.use_mask:
         if silhouette_loss_type == "bce":
@@ -342,6 +357,7 @@ def cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_ty
         loss = loss + opt.lambda_silhouette * silhouette_loss
         if tb_writer is not None:
             tb_writer.add_scalar('training_loss/silhouette_loss', silhouette_loss, iteration)
+            logx.add_scalar('training_loss/silhouette_loss', silhouette_loss, iteration)
 
     if hasattr(viewpoint_cam, "mono_depth") and viewpoint_cam.mono_depth is not None:
         if mono_loss_type == "mid":
@@ -365,6 +381,7 @@ def cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_ty
         loss = loss + args.mono_depth_weight * depth_loss
         if tb_writer is not None:
             tb_writer.add_scalar('training_loss/depth_loss', depth_loss, iteration)
+            logx.add_scalar('training_loss/depth_loss', depth_loss, iteration)
 
     return loss, Ll1, depth_loss
 

@@ -7,6 +7,7 @@ python train_gs.py -s data/mip360/kitchen \
     --init_pcd_name visual_hull_4 \
     --white_background --random_background
 "
+# --opacity_reset_interval 3000
 # TODO: test sh_degree 4
 echo $cmd
 eval $cmd
