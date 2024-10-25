@@ -20,7 +20,8 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud, z_score_from_percentage
 from utils.general_utils import strip_symmetric, build_scaling_rotation
-from utils.util_print import STR_VERBOSE, logx
+from logging import Logger
+from typing import Optional
 import pytorch3d.ops as p3dops
 
 class GaussianModel:
@@ -43,7 +44,7 @@ class GaussianModel:
         self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree : int):
+    def __init__(self, sh_degree : int, logger: Optional[Logger] = None):
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
@@ -59,6 +60,7 @@ class GaussianModel:
         self.percent_dense = 0
         self.spatial_lr_scale = 0
         self._backup_attributes = {}
+        self.logger = logger
         self.setup_functions()
 
     def capture(self):
@@ -155,7 +157,7 @@ class GaussianModel:
 
         from utils.util_print import STR_DEBUG
         # print(STR_DEBUG, "In scene/gaussian_model.py/create_from_pcd: Number of points at initialisation : ", fused_point_cloud.shape[0])
-        logx.msg(STR_DEBUG + "In scene/gaussian_model.py/create_from_pcd: Number of points at initialisation : {}".format(fused_point_cloud.shape[0]))
+        self.logger.info("In scene/gaussian_model.py/create_from_pcd: Number of points at initialisation : {}".format(fused_point_cloud.shape[0]))
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
@@ -253,7 +255,7 @@ class GaussianModel:
 
         from utils.util_print import STR_DEBUG
         # print(STR_DEBUG, "In scene/gaussian_model.py/load_ply: Number of points at initialisation : ", xyz.shape[0])
-        logx.msg(STR_DEBUG + "In scene/gaussian_model.py/load_ply: Number of points at initialisation : {}".format(xyz.shape[0]))
+        self.logger.info(f"In scene/gaussian_model.py/load_ply: Number of points at initialisation : {xyz.shape[0]}")
 
         features_dc = np.zeros((xyz.shape[0], 3, 1))
         features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
@@ -429,7 +431,7 @@ class GaussianModel:
         grads = self.xyz_gradient_accum / self.denom  # 除以某个点的更新次数 为的是求出该点的平均梯度
         grads[grads.isnan()] = 0.0
         #TODO: Add logs
-        logx.msg(STR_VERBOSE + f'In gaussian_model/densify_and_prune: grads.max(): {grads.max()}, grads.min(): {grads.min()}')
+        self.logger.info(f'In gaussian_model/densify_and_prune: grads.max(): {grads.max()}, grads.min(): {grads.min()}')
 
         # densify
         # 利用平均梯度判断是否超出grad_threshold 可以确保仅对具有一致高梯度的区域（即需要更多细节的区域）进行致密化
@@ -448,7 +450,7 @@ class GaussianModel:
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent # scale too big
             for_bigpoints_ws = big_points_ws.sum()
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
-        logx.msg(STR_VERBOSE + "In gaussian_model/densify_and_prune: Pruning: {} points removed, Specifically, for opacity {} points, for big {} points in vs and {} points in ws, max_screen_size is {}".format(prune_mask.sum(), for_opacity, for_bigpoints_vs, for_bigpoints_ws, "None" if max_screen_size is None else max_screen_size))
+        self.logger.info("In gaussian_model/densify_and_prune: Pruning: {} points removed, Specifically, for opacity {} points, for big {} points in vs and {} points in ws, max_screen_size is {}".format(prune_mask.sum(), for_opacity, for_bigpoints_vs, for_bigpoints_ws, max_screen_size))
         self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()
@@ -457,7 +459,7 @@ class GaussianModel:
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
         # print(STR_VERBOSE, f'In scene/gaussian_model.py: grads.max(): {grads.max()}, grads.min(): {grads.min()}')
-        logx.msg(STR_VERBOSE + f'In scene/gaussian_model.py: grads.max(): {grads.max()}, grads.min(): {grads.min()}')
+        self.logger.info(f'In scene/gaussian_model.py: grads.max(): {grads.max()}, grads.min(): {grads.min()}')
         self.densify_and_clone(grads, max_grad, extent)
         self.densify_and_split(grads, max_grad, extent)
 
@@ -471,7 +473,7 @@ class GaussianModel:
             for_bigpoints_ws = big_points_ws.sum()
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
         # print(STR_VERBOSE, "In scene/gaussian_model.py: Pruning: {} points removed, Specifically, for opacity {} points, for big {} points in vs and {} points in ws".format(prune_mask.sum(), for_opacity, for_bigpoints_vs, for_bigpoints_ws))
-        logx.msg(STR_VERBOSE + "In scene/gaussian_model.py: Pruning: {} points removed, Specifically, for opacity {} points, for big {} points in vs and {} points in ws, max_screen_size is {}".format(prune_mask.sum(), for_opacity, for_bigpoints_vs, for_bigpoints_ws, "None" if max_screen_size is None else max_screen_size))
+        self.logger.info("In scene/gaussian_model.py: Pruning: {} points removed, Specifically, for opacity {} points, for big {} points in vs and {} points in ws, max_screen_size is {}".format(prune_mask.sum(), for_opacity, for_bigpoints_vs, for_bigpoints_ws, max_screen_size))
         self.prune_points(prune_mask)
 
     def remove_outliers(self, opt, step, linear=False, removing_ratio=0, remaining_rate=0.0):  # 为了区分object和floater
