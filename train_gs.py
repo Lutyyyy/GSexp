@@ -30,16 +30,16 @@ from scene import GaussianModel, Scene
 from utils.general_utils import safe_state
 from utils.image_utils import psnr
 from utils.loss_utils import l1_loss, ssim, monodisp
-from utils.util_print import STR_DEBUG, STR_VERBOSE, STR_STAGE, STR_WARNING, STR_ERROR
-
+from utils.util_print import STR_DEBUG, STR_STAGE
+from utils.util_logger import create_logger
 
 TENSORBOARD_FOUND = True
 
 
 def training(args, dataset, opt, pipe, testing_iterations: list, saving_iterations: list, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
-    tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)  #NOTE 该初始化函数仅仅是创建一堆空的GS属性张量 没有具体的赋值
+    tb_writer, logger = prepare_output_and_logger(dataset)
+    gaussians = GaussianModel(dataset.sh_degree, logger)  #NOTE 该初始化函数仅仅是创建一堆空的GS属性张量 没有具体的赋值
     #NOTE Scene的初始化函数中已经包括是否选择恢复点云数据来创建高斯场景 但不包括一些累积的梯度、优化器状态、denom、spatial_lr_scale等
     scene = Scene(dataset, gaussians, extra_opts=args)
     gaussians.training_setup(opt)
@@ -123,7 +123,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
         # print(STR_WARNING, means_2d.shape, means_2d.grad.shape, means_3d.shape, means_3d.grad.shape)
         iter_end.record()
 
-        with torch.no_grad():
+        with torch.no_grad():  # 在每个训练轮次结束之后 不再需要梯度信息 开始执行不需要梯度信息的操作
             # 记录损失的指数移动平均值，并定期更新进度条
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
@@ -135,6 +135,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
                 progress_bar.close()
 
             # Log and save
+            # 记录densify之前的状态 包括高斯球的数量和损失值 以及测试时候才记录的损失值和高斯球不透明度
             results.update({
                 f'{iteration}': training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             })
@@ -158,7 +159,9 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
                 
                 # 每隔一定迭代次数或在白色背景数据集上的指定迭代次数时重置不透明度
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
-                    print(STR_ERROR, f'Resetting Opacity in {iteration}')
+                    # print(STR_ERROR, f'Resetting Opacity in {iteration}')
+                    logger.debug(f'Resetting Opacity in {iteration}')
+
                     gaussians.reset_opacity()
 
                 # 每隔一定迭代次数移除不正确的点
@@ -180,6 +183,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
     with open(args.model_path + '/train_gs.json', 'w') as fp:
         print(STR_DEBUG, f"saving results in {args.model_path + '/train_gs.json'}")
         json.dump(results, fp, indent=True)
+    logger.warning(f"Training finished. Results saved in {args.model_path + '/train_gs.json'}")
 
 
 def prepare_output_and_logger(args):    
@@ -203,7 +207,10 @@ def prepare_output_and_logger(args):
         tb_writer = SummaryWriter(args.model_path)
     else:
         print("Tensorboard not available: not logging progress")
-    return tb_writer
+
+    # Create Logger
+    logger = create_logger(os.path.join(args.model_path, 'train.log'))
+    return tb_writer, logger
 
 def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
     result = {
@@ -283,6 +290,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapse
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)  # 只在测试过程中记录高斯球的不透明度
+            #? 目前没用上?
         torch.cuda.empty_cache()
 
     return result
