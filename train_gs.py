@@ -190,9 +190,9 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
     fieldnames = set()
     for data in results.values():
         fieldnames.update(data.keys())
-    fieldnames = ["epoch"] + list(fieldnames)  # 排序后加上 epoch 字段
+    fieldnames = ["epoch"] + list(fieldnames)
 
-    # 将数据写入 CSV 文件
+    # write results in CSV file
     with open(os.path.join(args.model_path, "training_results.csv"), mode="w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()  # 写入表头
