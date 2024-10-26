@@ -8,6 +8,7 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
+# Modified according to GSexp/main
 
 import os
 import torch
