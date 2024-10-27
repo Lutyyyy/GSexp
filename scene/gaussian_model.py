@@ -21,6 +21,8 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+from logging import Logger
+from typing import Optional
 
 try:
     from diff_gaussian_rasterization import SparseGaussianAdam
@@ -47,7 +49,7 @@ class GaussianModel:
         self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree, optimizer_type="default"):
+    def __init__(self, sh_degree: int, logger: Optional[Logger] = None, optimizer_type="default"):
         self.active_sh_degree = 0
         self.optimizer_type = optimizer_type
         self.max_sh_degree = sh_degree  
@@ -63,6 +65,7 @@ class GaussianModel:
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
+        self.logger = logger
         self.setup_functions()
 
     def capture(self):
@@ -100,6 +103,27 @@ class GaussianModel:
         self.optimizer.load_state_dict(opt_dict)
 
     @property
+    def cache(self):  #NOTE For leave_one_out_stage
+        return [self._xyz.detach(),
+                self._features_dc.detach(),
+                self._features_rest.detach() if self._features_rest.numel() > 0 else torch.empty(0),
+                self._scaling.detach(),
+                self._rotation.detach(),
+                self._opacity.detach()]
+
+    @property
+    def get_scales(self):
+        return self._scaling
+    
+    @property
+    def get_opacities(self):
+        return self._opacity
+
+    @property
+    def get_rotations(self):
+        return self._rotation
+
+    @property
     def get_scaling(self):
         return self.scaling_activation(self._scaling)
     
@@ -131,6 +155,7 @@ class GaussianModel:
     
     @property
     def get_exposure(self):
+        # 每张图片是一个 3*4 的矩阵曝光值
         return self._exposure
 
     def get_exposure_from_name(self, image_name):
@@ -154,13 +179,15 @@ class GaussianModel:
         features[:, :3, 0 ] = fused_color
         features[:, 3:, 1:] = 0.0
 
-        print("Number of points at initialisation : ", fused_point_cloud.shape[0])
+        # print(STR_DEBUG, "In scene/gaussian_model.py/create_from_pcd: Number of points at initialisation : ", fused_point_cloud.shape[0])
+        self.logger.info("In scene/gaussian_model.py/create_from_pcd: Number of points at initialisation : {}".format(fused_point_cloud.shape[0]))
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
 
+        # 用 inverse_sigmoid 表达 opacity 是为了增加非线性 该反函数是将概率转为logits 这样网络训练过程用的都是logits而不是一个概率值
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
@@ -172,7 +199,7 @@ class GaussianModel:
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self.exposure_mapping = {cam_info.image_name: idx for idx, cam_info in enumerate(cam_infos)}
         self.pretrained_exposures = None
-        exposure = torch.eye(3, 4, device="cuda")[None].repeat(len(cam_infos), 1, 1)
+        exposure = torch.eye(3, 4, device="cuda")[None].repeat(len(cam_infos), 1, 1)  # 每张图片的曝光值为3*4
         self._exposure = nn.Parameter(exposure.requires_grad_(True))
 
     def training_setup(self, training_args):
@@ -222,6 +249,9 @@ class GaussianModel:
                 param_group['lr'] = lr
                 return lr
 
+    def update_spatial_lr_scale(self, spatial_lr_scale):  #NOTE For GSDreamer
+        self.spatial_lr_scale = spatial_lr_scale
+
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
         # All channels except the 3 DC
@@ -261,6 +291,7 @@ class GaussianModel:
         self._opacity = optimizable_tensors["opacity"]
 
     def load_ply(self, path, use_train_test_exp = False):
+        # 训练开始的GS球初始化步骤 从ply文件中加载各种数据 并设置成可以算梯度的参数
         plydata = PlyData.read(path)
         if use_train_test_exp:
             exposure_file = os.path.join(os.path.dirname(path), os.pardir, os.pardir, "exposure.json")
@@ -277,6 +308,9 @@ class GaussianModel:
                         np.asarray(plydata.elements[0]["y"]),
                         np.asarray(plydata.elements[0]["z"])),  axis=1)
         opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
+
+        # print(STR_DEBUG, "In scene/gaussian_model.py/load_ply: Number of points at initialisation : ", xyz.shape[0])
+        self.logger.info(f"In scene/gaussian_model.py/load_ply: Number of points at initialisation : {xyz.shape[0]}")
 
         features_dc = np.zeros((xyz.shape[0], 3, 1))
         features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
@@ -310,6 +344,8 @@ class GaussianModel:
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
+        #NOTE 原始的GS没有初始化这一步
+        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")  # 图像空间中的半径
 
         self.active_sh_degree = self.max_sh_degree
 
@@ -401,16 +437,17 @@ class GaussianModel:
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
 
-        self.tmp_radii = torch.cat((self.tmp_radii, new_tmp_radii))
+        self.tmp_radii = torch.cat((self.tmp_radii, new_tmp_radii))  # 把稠密化中更新的两个点的半径加入到tmp_radii中
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
+        # N=2 表示每个点增加两个点
         n_init_points = self.get_xyz.shape[0]
         # Extract points that satisfy the gradient condition
         padded_grad = torch.zeros((n_init_points), device="cuda")
-        padded_grad[:grads.shape[0]] = grads.squeeze()
+        padded_grad[:grads.shape[0]] = grads.squeeze()  # 把梯度展平
         selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
@@ -445,23 +482,35 @@ class GaussianModel:
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
 
-        new_tmp_radii = self.tmp_radii[selected_pts_mask]
+        new_tmp_radii = self.tmp_radii[selected_pts_mask]  # 选出符合条件的点的半径
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_tmp_radii)
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, radii):
-        grads = self.xyz_gradient_accum / self.denom
+        grads = self.xyz_gradient_accum / self.denom  # 除以某个点的更新次数 为的是求出该点的平均梯度
         grads[grads.isnan()] = 0.0
 
         self.tmp_radii = radii
+        self.logger.info(f'In gaussian_model/densify_and_prune: grads.max(): {grads.max()}, grads.min(): {grads.min()}')
+
+        # densify
+        # 利用平均梯度判断是否超出grad_threshold 可以确保仅对具有一致高梯度的区域（即需要更多细节的区域）进行致密化
+        # 如果基于单个步骤的梯度做出致密化决策，则可能会受到数据中的临时峰值或波动的影响
         self.densify_and_clone(grads, max_grad, extent)
         self.densify_and_split(grads, max_grad, extent)
 
+        # prune
+        #TODO: Add logs
         prune_mask = (self.get_opacity < min_opacity).squeeze()
+        for_opacity = prune_mask.sum()
+        for_bigpoints_vs, for_bigpoints_ws = None, None
         if max_screen_size:
-            big_points_vs = self.max_radii2D > max_screen_size
-            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+            big_points_vs = self.max_radii2D > max_screen_size # too big on screen
+            for_bigpoints_vs = big_points_vs.sum()
+            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent # scale too big
+            for_bigpoints_ws = big_points_ws.sum()
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
+        self.logger.info("In gaussian_model/densify_and_prune: Pruning: {} points removed, Specifically, for opacity {} points, for big {} points in vs and {} points in ws, max_screen_size is {}".format(prune_mask.sum(), for_opacity, for_bigpoints_vs, for_bigpoints_ws, max_screen_size))
         self.prune_points(prune_mask)
         tmp_radii = self.tmp_radii
         self.tmp_radii = None
@@ -469,5 +518,7 @@ class GaussianModel:
         torch.cuda.empty_cache()
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
-        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
+        # viewspace_point_tensor是3维度的，取出前两维度就是xy平面上的梯度
+        # z 就是最后一个维度的梯度
+        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)  # 把所有3D高斯球的梯度加起来求norm
         self.denom[update_filter] += 1
