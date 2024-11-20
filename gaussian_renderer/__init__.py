@@ -111,6 +111,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         
     # Apply exposure to rendered image (training only)
     if use_trained_exp:
+        # 获取3*4的矩阵 表示当前图片的曝光值
         exposure = pc.get_exposure_from_name(viewpoint_camera.image_name)
         rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
 
@@ -120,9 +121,23 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     out = {
         "render": rendered_image,
         "viewspace_points": screenspace_points,
-        "visibility_filter" : (radii > 0).nonzero(),
+        "visibility_filter" : (radii > 0).nonzero(),  # 前版本返回的是bool 现在返回的是index 结果是完全一致的
         "radii": radii,
-        "depth" : depth_image
-        }
+        "depth" : depth_image, 
+        # 缺一个alpha变量？
+        "input": {
+            "means3D": pc.get_xyz,  # self._xyz
+            "opacity": pc.get_opacities,  # self._opacity
+            "rotation": pc.get_rotations,  # self._rotation
+            "scale": pc.get_scales,  # self._scaling
+        },
+        "layer_input": {
+            "layer_means2D": means2D,  # screenspace_points
+            "layer_means3D": means3D,  # self._xyz
+            "layer_opacity": opacity,  # self._opacity
+            "layer_rotation": rotations,  # self._rotation
+            "layer_scale": scales,  # self.scaling_activation(self._scaling)
+        },
+    }
     
     return out
