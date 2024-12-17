@@ -22,10 +22,10 @@ def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dat
 
     if cam_info.depth_path != "":
         try:
-            if is_nerf_synthetic:
+            if is_nerf_synthetic:  # 如果是 NeRF 合成数据集，那么深度图的像素值是 0-512 所以归一化要除以 512
                 invdepthmap = cv2.imread(cam_info.depth_path, -1).astype(np.float32) / 512
             else:
-                invdepthmap = cv2.imread(cam_info.depth_path, -1).astype(np.float32) / float(2**16)
+                invdepthmap = cv2.imread(cam_info.depth_path, -1).astype(np.float32) / float(2**16)  # 否则是 0-65535
 
         except FileNotFoundError:
             print(f"Error: The depth file at path '{cam_info.depth_path}' was not found.")
