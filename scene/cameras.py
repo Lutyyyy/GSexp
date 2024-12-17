@@ -45,13 +45,13 @@ class Camera(nn.Module):
         if resized_image_rgb.shape[0] == 4:
             self.alpha_mask = resized_image_rgb[3:4, ...].to(self.data_device)
         else: 
-            self.alpha_mask = torch.ones_like(resized_image_rgb[0:1, ...].to(self.data_device))
+            self.alpha_mask = torch.ones_like(resized_image_rgb[0:1, ...].to(self.data_device))  # 没有透明度那一个channel 则全部初始化成1 表示全部可见
 
         if train_test_exp and is_test_view:
-            if is_test_dataset:
-                self.alpha_mask[..., :self.alpha_mask.shape[-1] // 2] = 0
-            else:
-                self.alpha_mask[..., self.alpha_mask.shape[-1] // 2:] = 0
+            if is_test_dataset:  # 在测试阶段测试模型的抗遮挡能力
+                self.alpha_mask[..., :self.alpha_mask.shape[-1] // 2] = 0  # 将alpha_mask的前半部分置为0，表示不可见
+            else:  # 在验证阶段测试模型的抗遮挡能力
+                self.alpha_mask[..., self.alpha_mask.shape[-1] // 2:] = 0  # 将alpha_mask的后半部分置为0，表示不可见
 
         self.original_image = gt_image.clamp(0.0, 1.0).to(self.data_device)
         self.image_width = self.original_image.shape[2]
