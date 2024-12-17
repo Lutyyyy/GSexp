@@ -123,6 +123,11 @@ def fetchPly(path):
     positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
     colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
     normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    # GSObj中有处理空normals的代码
+    # try:
+    #     normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    # except:
+    #     normals = np.zeros_like(positions)
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
 def storePly(path, xyz, rgb):
@@ -154,6 +159,8 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
+    # GSObj中没有depths这一步 用于对depth图片进行判断该深度图是否可靠 包括scale和offset. In GSexp/scene/cameras.py
+    # depth_params["scale"] 和 depth_params["offset"] 由数据集本身提供
     depth_params_file = os.path.join(path, "sparse/0", "depth_params.json")
     ## if depth_params_file isnt there AND depths file is here -> throw error
     depths_params = None
@@ -225,6 +232,7 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
                            is_nerf_synthetic=False)
     return scene_info
 
+# GSexp中因为是GSObj的仓库 没有本函数。是为了读取NeRF-Synthetic数据集
 def readCamerasFromTransforms(path, transformsfile, depths_folder, white_background, is_test, extension=".png"):
     cam_infos = []
 
@@ -270,6 +278,7 @@ def readCamerasFromTransforms(path, transformsfile, depths_folder, white_backgro
             
     return cam_infos
 
+# GSexp中因为是GSObj的仓库 没有本函数
 def readNerfSyntheticInfo(path, white_background, depths, eval, extension=".png"):
 
     depths_folder=os.path.join(path, depths) if depths != "" else ""
