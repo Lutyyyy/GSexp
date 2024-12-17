@@ -79,6 +79,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
             colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
         else:
+            # GSObj没有这一步 这一步差别关键在于下面的rasterizer函数如何渲染的
             if separate_sh:
                 dc, shs = pc.get_features_dc, pc.get_features_rest
             else:
@@ -124,6 +125,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         "visibility_filter" : (radii > 0).nonzero(),  # 前版本返回的是bool 现在返回的是index 结果是完全一致的
         "radii": radii,
         "depth" : depth_image, 
+        # "rendered_alpha": rendered_alpha,  # acc
         # 缺一个alpha变量？
         "input": {
             "means3D": pc.get_xyz,  # self._xyz
