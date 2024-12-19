@@ -46,7 +46,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=pipe.debug,
-        antialiasing=pipe.antialiasing
+        antialiasing=pipe.antialiasing  # Add from Mip-Splatting
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -111,7 +111,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             cov3D_precomp = cov3D_precomp)
         
     # Apply exposure to rendered image (training only)
-    if use_trained_exp:
+    if use_trained_exp:  # for Hierarchical 3dgs
         # 获取3*4的矩阵 表示当前图片的曝光值
         exposure = pc.get_exposure_from_name(viewpoint_camera.image_name)
         rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
@@ -119,6 +119,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     rendered_image = rendered_image.clamp(0, 1)
+    from utils.util_print import STR_ERROR
+    print(STR_ERROR + f"Min: {rendered_image.min()}, Max: {rendered_image.max()}")
     out = {
         "render": rendered_image,
         "viewspace_points": screenspace_points,
