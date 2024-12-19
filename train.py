@@ -74,7 +74,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
     use_sparse_adam = opt.optimizer_type == "sparse_adam" and SPARSE_ADAM_AVAILABLE 
     depth_l1_weight = get_expon_lr_func(opt.depth_l1_weight_init, opt.depth_l1_weight_final, max_steps=opt.iterations)  # exponential decay learning rate
 
-    viewpoint_stack = scene.getTrainCameras().copy()  # 返回一串训练相机
+    viewpoint_stack = scene.getTrainCameras().copy()
     viewpoint_indices = list(range(len(viewpoint_stack)))
     ema_loss_for_log = 0.0
     ema_Ll1depth_for_log = 0.0
@@ -112,6 +112,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
             viewpoint_indices = list(range(len(viewpoint_stack)))
         rand_idx = randint(0, len(viewpoint_indices) - 1)
         viewpoint_cam = viewpoint_stack.pop(rand_idx)
+        vind = viewpoint_indices.pop(rand_idx)
 
         # Render 一定步数之后开始渲染
         if (iteration - 1) == debug_from:
@@ -224,16 +225,19 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
                     gaussians.reset_opacity()
 
             # Optimizer step
+            # if iteration < opt.iterations:
+            #     gaussians.exposure_optimizer.step()
+            #     gaussians.exposure_optimizer.zero_grad(set_to_none = True)
+            #     if use_sparse_adam:
+            #         visible = radii > 0
+            #         gaussians.optimizer.step(visible, radii.shape[0])
+            #         gaussians.optimizer.zero_grad(set_to_none = True)
+            #     else:
+            #         gaussians.optimizer.step()
+            #         gaussians.optimizer.zero_grad(set_to_none = True)
             if iteration < opt.iterations:
-                gaussians.exposure_optimizer.step()
-                gaussians.exposure_optimizer.zero_grad(set_to_none = True)
-                if use_sparse_adam:
-                    visible = radii > 0
-                    gaussians.optimizer.step(visible, radii.shape[0])
-                    gaussians.optimizer.zero_grad(set_to_none = True)
-                else:
-                    gaussians.optimizer.step()
-                    gaussians.optimizer.zero_grad(set_to_none = True)
+                gaussians.optimizer.step()
+                gaussians.optimizer.zero_grad(set_to_none = True)
 
             # 保存检查点
             if (iteration in checkpoint_iterations):
@@ -331,17 +335,17 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapse
 
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
-                    depth_test_loss += depth_loss.mean().double()
+                    depth_test_loss += depth_loss
 
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])          
                 depth_test_loss /= len(config['cameras'])
-                # print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 result.update({
                     'Evaluation_Camera': config['name'],
                     'L1_test': l1_test.item(),
                     'PSNR_test': psnr_test.item(),
-                    'Depth_test_loss': depth_test_loss.item(),
+                    'Depth_test_loss': depth_test_loss,
                 })
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '_camera/loss_viewpoint - l1_loss', l1_test, iteration)

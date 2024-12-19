@@ -119,8 +119,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     rendered_image = rendered_image.clamp(0, 1)
-    from utils.util_print import STR_ERROR
-    print(STR_ERROR + f"Min: {rendered_image.min()}, Max: {rendered_image.max()}")
+    # from utils.util_print import STR_ERROR
+    # print(STR_ERROR + f"Min: {rendered_image.min()}, Max: {rendered_image.max()}")
     out = {
         "render": rendered_image,
         "viewspace_points": screenspace_points,
