@@ -26,7 +26,7 @@ class Scene:
         """b
         :param path: Path to colmap scene main folder.
         """
-        self.model_path = args.model_path
+        self.model_path = args.model_path # type: ignore
         self.loaded_iter = None
         self.gaussians = gaussians
 
@@ -40,6 +40,7 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
+        # 根据场景类型（Colmap 或 Blender）加载所有的场景信息
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.depths, args.eval, args.train_test_exp)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
@@ -50,7 +51,7 @@ class Scene:
 
         if not self.loaded_iter:
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
-                dest_file.write(src_file.read())
+                dest_file.write(src_file.read())  # 把ply文件复制到input.ply
             json_cams = []
             camlist = []
             if scene_info.test_cameras:
@@ -69,6 +70,7 @@ class Scene:
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
         for resolution_scale in resolution_scales:
+            # GSObj还加载了环形相机: render_cameras
             print("Loading Training Cameras")
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args, scene_info.is_nerf_synthetic, False)
             print("Loading Test Cameras")
@@ -85,6 +87,7 @@ class Scene:
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
+        # GSObj没有exposure
         exposure_dict = {
             image_name: self.gaussians.get_exposure_from_name(image_name).detach().cpu().numpy().tolist()
             for image_name in self.gaussians.exposure_mapping
