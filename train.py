@@ -198,7 +198,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
             # Log and save
             # 记录densify之前的状态 包括高斯球的数量和损失值 以及测试时候才记录的损失值和高斯球不透明度
             results.update({
-                f'{iteration}': training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ll1depth_pure, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, dataset.train_test_exp, SPARSE_ADAM_AVAILABLE), dataset.train_test_exp)
+                f'{iteration}': training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ll1depth_pure, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp)
             })
 
             if (iteration in saving_iterations):  # 达到保存次数则保存场景
