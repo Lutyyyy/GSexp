@@ -12,6 +12,7 @@
 # Coarse 3DGS training code
 
 import os
+import csv
 import sys
 import uuid
 import json
@@ -39,6 +40,7 @@ TENSORBOARD_FOUND = True
 def training(args, dataset, opt, pipe, testing_iterations: list, saving_iterations: list, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer, logger = prepare_output_and_logger(dataset)
+    logger.log_command(args)
     gaussians = GaussianModel(dataset.sh_degree, logger)  #NOTE 该初始化函数仅仅是创建一堆空的GS属性张量 没有具体的赋值
     #NOTE Scene的初始化函数中已经包括是否选择恢复点云数据来创建高斯场景 但不包括一些累积的梯度、优化器状态、denom、spatial_lr_scale等
     scene = Scene(dataset, gaussians, extra_opts=args)
@@ -180,10 +182,27 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/ckpt" + str(iteration) + ".pth")  # capture函数保存了训练状态 对应的恢复函数是restore
 
     # saving json result after training
-    with open(args.model_path + '/train_gs.json', 'w') as fp:
-        print(STR_DEBUG, f"saving results in {args.model_path + '/train_gs.json'}")
+    with open(args.model_path + '/training_results.json', 'w') as fp:
+        print(STR_DEBUG, f"saving results in {args.model_path + '/training_results.json'}")
         json.dump(results, fp, indent=True)
-    logger.warning(f"Training finished. Results saved in {args.model_path + '/train_gs.json'}")
+
+    # saving csv result after training
+    fieldnames = set()
+    for data in results.values():
+        fieldnames.update(data.keys())
+    fieldnames = ["epoch"] + list(fieldnames)
+
+    # write results in CSV file
+    with open(os.path.join(args.model_path, "training_results.csv"), mode="w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()  # 写入表头
+
+        for epoch, data in results.items():
+            # 将 epoch 作为字典中的一项，以便写入 CSV 文件
+            row = {"epoch": epoch, **data}
+            writer.writerow(row)
+
+    logger.warning(f"Training finished. Results saved in {args.model_path + '/training_results.json/csv'}")
 
 
 def prepare_output_and_logger(args):    
@@ -209,7 +228,7 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
 
     # Create Logger
-    logger = create_logger(os.path.join(args.model_path, 'train.log'))
+    logger = create_logger(logpath=args.model_path)
     return tb_writer, logger
 
 def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
