@@ -44,7 +44,7 @@ class GaussianModel:
         self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree : int, logger: Optional[Logger] = None):
+    def __init__(self, sh_degree: int, logger: Optional[Logger] = None):
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
@@ -135,7 +135,15 @@ class GaussianModel:
         features_dc = self._features_dc
         features_rest = self._features_rest
         return torch.cat((features_dc, features_rest), dim=1)
+
+    @property
+    def get_features_dc(self):
+        return self._features_dc
     
+    @property
+    def get_features_rest(self):
+        return self._features_rest
+
     @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
@@ -155,7 +163,6 @@ class GaussianModel:
         features[:, :3, 0 ] = fused_color
         features[:, 3:, 1:] = 0.0
 
-        from utils.util_print import STR_DEBUG
         # print(STR_DEBUG, "In scene/gaussian_model.py/create_from_pcd: Number of points at initialisation : ", fused_point_cloud.shape[0])
         self.logger.info("In scene/gaussian_model.py/create_from_pcd: Number of points at initialisation : {}".format(fused_point_cloud.shape[0]))
 
@@ -253,7 +260,6 @@ class GaussianModel:
                         np.asarray(plydata.elements[0]["z"])),  axis=1)
         opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
 
-        from utils.util_print import STR_DEBUG
         # print(STR_DEBUG, "In scene/gaussian_model.py/load_ply: Number of points at initialisation : ", xyz.shape[0])
         self.logger.info(f"In scene/gaussian_model.py/load_ply: Number of points at initialisation : {xyz.shape[0]}")
 
@@ -388,6 +394,7 @@ class GaussianModel:
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
+        # N=2 表示每个点增加两个点
         n_init_points = self.get_xyz.shape[0]
         # Extract points that satisfy the gradient condition
         padded_grad = torch.zeros((n_init_points), device="cuda")

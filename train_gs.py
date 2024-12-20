@@ -43,7 +43,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
     logger.log_command(args)
     gaussians = GaussianModel(dataset.sh_degree, logger)  #NOTE 该初始化函数仅仅是创建一堆空的GS属性张量 没有具体的赋值
     #NOTE Scene的初始化函数中已经包括是否选择恢复点云数据来创建高斯场景 但不包括一些累积的梯度、优化器状态、denom、spatial_lr_scale等
-    scene = Scene(dataset, gaussians, extra_opts=args)
+    scene = Scene(dataset, gaussians, extra_opts=args)  # extra_opts仅在Scene读稀疏数据集用上的
     gaussians.training_setup(opt)
     if checkpoint:  #NOTE 具体 GS 的属性初始化在 Scene 初始化的时候实现了 这一步主要是为了恢复梯度以及信息 也就是上面 Scene 没包括的信息 应该会自动覆盖原先初始化好的 GS 属性
         (model_params, first_iter) = torch.load(checkpoint)
@@ -175,6 +175,14 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
+                # Gaussian-splatting updated
+                # if use_sparse_adam:
+                #     visible = radii > 0
+                #     gaussians.optimizer.step(visible, radii.shape[0])
+                #     gaussians.optimizer.zero_grad(set_to_none = True)
+                # else:
+                #     gaussians.optimizer.step()
+                #     gaussians.optimizer.zero_grad(set_to_none = True)
 
             # 保存检查点
             if (iteration in checkpoint_iterations):

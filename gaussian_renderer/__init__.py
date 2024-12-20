@@ -60,6 +60,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     scales = None
     rotations = None
     cov3D_precomp = None
+
     if pipe.compute_cov3D_python:
         cov3D_precomp = pc.get_covariance(scaling_modifier)
     else:
@@ -83,6 +84,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
+    # TODO: 加入separate_sh参数，在渲染过程中区分
     rendered_image, radii, rendered_depth, rendered_alpha = rasterizer(  # 额外返回渲染的深度和权重
         means3D=means3D, means2D=means2D, shs=shs, colors_precomp=colors_precomp, opacities=opacity, scales=scales, rotations=rotations, cov3D_precomp=cov3D_precomp
     )
@@ -93,6 +95,8 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
+    from utils.util_print import STR_ERROR
+    print(STR_ERROR + f"Min: {rendered_image.min()}, Max: {rendered_image.max()}")
     return {
         "render": rendered_image,
         "viewspace_points": screenspace_points,
