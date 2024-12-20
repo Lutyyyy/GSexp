@@ -198,8 +198,8 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, extra_opts=None):
         pcd = None
 
     if hasattr(extra_opts, 'sparse_view_num') and extra_opts.sparse_view_num > 0: # means sparse setting
-        # 如果有稀疏视角的设置 直接从文件读出来train和test的相机参数
-        #NOTE since it is -1, so this will also not be executed
+        # 如果有稀疏视角的设置 直接根据txt文件读出来train和test的相机参数
+        #NOTE if it is -1, so this will also not be executed
         #NOTE But when training GS, this will be executed!!
         assert eval == False
         assert osp.exists(osp.join(path, f"sparse_{str(extra_opts.sparse_view_num)}.txt")), "sparse_id.txt not found!"
