@@ -414,9 +414,9 @@ def cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_ty
         else:
             raise NotImplementedError
 
-        loss = loss + args.mono_depth_weight * depth_loss
-        # TODO: modify to adjust lr
-        # loss = loss + depth_l1_weight(iteration) * depth_loss
+        # loss = loss + args.mono_depth_weight * depth_loss
+        # NOTE: modify to adjust lr
+        loss = loss + depth_l1_weight(iteration) * depth_loss
         if tb_writer is not None:
             tb_writer.add_scalar('training_loss/depth_loss', depth_loss, iteration)
 
