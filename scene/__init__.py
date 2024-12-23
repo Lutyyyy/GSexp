@@ -20,13 +20,15 @@ from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 from utils.util_print import STR_STAGE, STR_VERBOSE, STR_DEBUG
+from logging import Logger
+from typing import Optional
 
 
 class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=False, resolution_scales=[1.0], extra_opts=None, load_ply=None):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=False, resolution_scales=[1.0], extra_opts=None, load_ply=None, logger: Optional[Logger]=None):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -86,12 +88,12 @@ class Scene:
             init_time = time.time()
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args, mode="train")
             init_time2 = time.time()
-            print(STR_STAGE, "Loading training cameras with {}s for {} cameras".format(init_time2 - init_time, len(self.train_cameras[resolution_scale])))
+            logger.warning("Loading training cameras with {}s for {} cameras".format(init_time2 - init_time, len(self.train_cameras[resolution_scale])))
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
             init_time3 = time.time()
-            print(STR_STAGE, "Loading test cameras with {}s for {} cameras".format(time.time() - init_time2, len(self.test_cameras[resolution_scale])))
+            logger.warning("Loading test cameras with {}s for {} cameras".format(time.time() - init_time2, len(self.test_cameras[resolution_scale])))
             self.render_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.render_cameras, resolution_scale, args)
-            print(STR_STAGE, "Loading render cameras with {}s for {} cameras".format(time.time() - init_time3, len(self.render_cameras[resolution_scale])))
+            logger.warning("Loading render cameras with {}s for {} cameras".format(time.time() - init_time3, len(self.render_cameras[resolution_scale])))
 
         # 加载或创建高斯模型
         if self.loaded_iter:
@@ -109,7 +111,7 @@ class Scene:
         else:
             # 否则，调用 create_from_pcd 方法根据场景信息中的点云数据创建高斯模型
             # 也就是从 init_pcd_name 点云中创建高斯模型
-            print(STR_DEBUG, f"In scene/__init__.py: create_from_pcd {scene_info.ply_path}")
+            logger.debug(f"In scene/__init__.py: create_from_pcd {scene_info.ply_path}")
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
             self.gaussians.save_ply(os.path.join(self.model_path, "input.ply"))
 

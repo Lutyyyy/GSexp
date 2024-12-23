@@ -72,7 +72,7 @@ class OptimizationParams(ParamGroup):
     def __init__(self, parser):
         self.max_num_splats = 3_000_000 # Stop densifying after this number of splats is reached
         #TODO ablation study
-        self.iterations = 10_000 # [default 30_000] Each iteration corresponds to reconstructing 1 image. The number of points being optimized increases over
+        self.iterations = 30_000 # [default 30_000] Each iteration corresponds to reconstructing 1 image. The number of points being optimized increases over
         self.position_lr_init = 0.00016 # [default 0.00016] Learning rate should be smaller for more extensive scenes
         self.position_lr_final = 0.0000016 # [default 0.0000016] Learning rate should be smaller for more extensive scenes
         self.position_lr_delay_mult = 0.01 # [default 0.01]
@@ -97,6 +97,9 @@ class OptimizationParams(ParamGroup):
         self.end_sample_pseudo = 1000000 # not use
         self.sample_pseudo_interval = 10 # not use
         self.random_background = False
+        # experimental params from GS-Splatting
+        self.depth_l1_weight_init = 0.01
+        self.depth_l1_weight_final = 0.0005
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

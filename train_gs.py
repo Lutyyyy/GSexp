@@ -28,11 +28,18 @@ from torch.utils.tensorboard.writer import SummaryWriter
 from arguments import ModelParams, OptimizationParams, PipelineParams
 from gaussian_renderer import network_gui, render
 from scene import GaussianModel, Scene
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, get_expon_lr_func
 from utils.image_utils import psnr
 from utils.loss_utils import l1_loss, ssim, monodisp
 from utils.util_print import STR_DEBUG, STR_STAGE
 from utils.util_logger import create_logger
+from logging import Logger
+
+try:
+    from fused_ssim import fused_ssim
+    FUSED_SSIM_AVAILABLE = True
+except:
+    FUSED_SSIM_AVAILABLE = False
 
 TENSORBOARD_FOUND = True
 
@@ -43,7 +50,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
     logger.log_command(args)
     gaussians = GaussianModel(dataset.sh_degree, logger)  #NOTE 该初始化函数仅仅是创建一堆空的GS属性张量 没有具体的赋值
     #NOTE Scene的初始化函数中已经包括是否选择恢复点云数据来创建高斯场景 但不包括一些累积的梯度、优化器状态、denom、spatial_lr_scale等
-    scene = Scene(dataset, gaussians, extra_opts=args)  # extra_opts仅在Scene读稀疏数据集用上的
+    scene = Scene(dataset, gaussians, extra_opts=args, logger=logger)  # extra_opts仅在Scene读稀疏数据集用上的
     gaussians.training_setup(opt)
     if checkpoint:  #NOTE 具体 GS 的属性初始化在 Scene 初始化的时候实现了 这一步主要是为了恢复梯度以及信息 也就是上面 Scene 没包括的信息 应该会自动覆盖原先初始化好的 GS 属性
         (model_params, first_iter) = torch.load(checkpoint)
@@ -56,8 +63,11 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    depth_l1_weight = get_expon_lr_func(opt.depth_l1_weight_init, opt.depth_l1_weight_final, max_steps=opt.iterations)  # exponential decay learning rate
+    # TODO: Modify to GS viewpoint_stack
     viewpoint_stack, augview_stack = None, None  # TODO: how to use augview
     ema_loss_for_log = 0.0
+    ema_Ll1depth_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     results = {}
@@ -101,8 +111,9 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
         input_dict, layer_input_dict = render_pkg["input"], render_pkg["layer_input"]
         # visibility_filter = radii > 0
 
+        # TODO: GaussianSplatting update: alpha_mask
         # Loss
-        loss, Ll1 , depth_loss = cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, tb_writer=tb_writer, iteration=iteration)  # 返回初始的l1_loss和总的loss
+        loss, Ll1 , depth_loss = cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, tb_writer=tb_writer, depth_l1_weight=depth_l1_weight, iteration=iteration)  # 返回初始的l1_loss和总的loss
 
         layer_grads = {}
         def save_grad(name):
@@ -139,7 +150,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
             # Log and save
             # 记录densify之前的状态 包括高斯球的数量和损失值 以及测试时候才记录的损失值和高斯球不透明度
             results.update({
-                f'{iteration}': training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+                f'{iteration}': training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), logger=logger)
             })
 
             if (iteration in saving_iterations):  # 达到保存次数则保存场景
@@ -239,7 +250,7 @@ def prepare_output_and_logger(args):
     logger = create_logger(logpath=args.model_path)
     return tb_writer, logger
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, logger: Optional[Logger] = None):
     result = {
         'train_loss_patches/l1_loss': Ll1.item(),  # 和cal_loss函数中画图的数值一样 因为就是直接传进去的
         'train_loss_patches/depth_loss': depth_loss.item(), # 和cal_loss函数中画图的数值一样 因为就是直接传进去的
@@ -303,7 +314,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapse
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])          
                 depth_test_loss /= len(config['cameras'])
-                # print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                logger.error("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 result.update({
                     'Evaluation_Camera': config['name'],
                     'L1_test': l1_test.item(),
@@ -344,7 +355,7 @@ def param_report(input_dict: dict, layer_input_dict: dict, tb_writer: Optional[S
         tb_writer.add_scalar(f'training_layer_params/{k}', v.mean().double(), iteration)
    
 
-def cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_type="bce", mono_loss_type="mid", tb_writer: Optional[SummaryWriter]=None, iteration=0):
+def cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_type="bce", mono_loss_type="mid", tb_writer: Optional[SummaryWriter]=None, depth_l1_weight=None, iteration=0):
     """
     Calculate the loss of the image, contains l1 loss and ssim loss.
     l1 loss: Ll1 = l1_loss(image, gt_image)
@@ -355,7 +366,15 @@ def cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_ty
     if opt.random_background:
         gt_image = gt_image * viewpoint_cam.mask + bg[:, None, None] * (1 - viewpoint_cam.mask).squeeze()
     Ll1 = l1_loss(image, gt_image)
-    Lssim = (1.0 - ssim(image, gt_image))
+    # Lssim = (1.0 - ssim(image, gt_image))
+    # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * Lssim
+
+    if FUSED_SSIM_AVAILABLE:
+        ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
+    else:
+        ssim_value = ssim(image, gt_image)
+    Lssim = (1.0 - ssim_value)
+
     loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * Lssim
 
     training_psnr = psnr(image, gt_image).mean().double()
@@ -385,8 +404,8 @@ def cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_ty
             if mask.sum() < 10:
                 depth_loss = torch.tensor(0.0, device=loss.device)
             else:
-                disp_mono = 1 / viewpoint_cam.mono_depth[mask].clamp(1e-6) # shape: [N]
-                disp_render = 1 / render_pkg["rendered_depth"][mask].clamp(1e-6) # shape: [N]
+                disp_mono = 1 / viewpoint_cam.mono_depth[mask].clamp(1e-6) # shape: [N]  invdepth
+                disp_render = 1 / render_pkg["rendered_depth"][mask].clamp(1e-6) # shape: [N]  invedepth
                 depth_loss = monodisp(disp_mono, disp_render, 'l1')[-1]
         elif mono_loss_type == "pearson":
             disp_mono = 1 / viewpoint_cam.mono_depth[viewpoint_cam.mask > 0.5].clamp(1e-6) # shape: [N]  clamp防止除0错误
@@ -396,6 +415,8 @@ def cal_loss(opt, args, image, render_pkg, viewpoint_cam, bg, silhouette_loss_ty
             raise NotImplementedError
 
         loss = loss + args.mono_depth_weight * depth_loss
+        # TODO: modify to adjust lr
+        # loss = loss + depth_l1_weight(iteration) * depth_loss
         if tb_writer is not None:
             tb_writer.add_scalar('training_loss/depth_loss', depth_loss, iteration)
 
