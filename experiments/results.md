@@ -1,3 +1,5 @@
+# GSDepth exp
+## Motivation
 ### Original GSmain sparse_view=4
 
 ```bash
@@ -64,3 +66,6 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
 
 
 - 使其收敛到原论文的depth weight. 依然没有很多变化 是否是因为前期depth weight太高使得优化陷入局部最小值后面出不来了
+## Method
+### Method1
+- CVPR 2020 best paper 的去噪思想来修正 depth shift and scale 和 depth regularization 结合
