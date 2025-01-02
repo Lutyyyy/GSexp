@@ -81,7 +81,7 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
 - 
 ### Graphics
 - [Binocular-Guided 3D Gaussian Splatting with View Consistency for Sparse View Synthesis](https://arxiv.org/pdf/2410.18822)
-    - LLFF(1/8)
+    - LLFF(1/8) **ALL SOTA**
         - 3: 21.44, 0.751, 0.168 
         - 6: 24.87, 0.845, 0.106 
         - 9: 26.17, 0.877, 0.090
