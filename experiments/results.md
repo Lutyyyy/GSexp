@@ -80,3 +80,14 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
 - [SparseNeuS](https://arxiv.org/pdf/2206.05737)
 - 
 ### Graphics
+- [Binocular-Guided 3D Gaussian Splatting with View Consistency for Sparse View Synthesis](https://arxiv.org/pdf/2410.18822)
+    - LLFF(1/8)
+        - 3: 21.44, 0.751, 0.168 
+        - 6: 24.87, 0.845, 0.106 
+        - 9: 26.17, 0.877, 0.090
+    - DTU(1/4)
+        - 3: 20.71, 0.862, 0.111 
+        - 6: 24.31, 0.917, 0.073 
+        - 9: 26.70, 0.947, 0.052
+    - NeRF Blender Synthetic dataset (Blender) (1/2)
+        - 8: 24.71, 0.872, 0.101
