@@ -75,5 +75,8 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
 - scale invariant method to fix depth supervision signal and combine with opacity augmentation
 ## Reference
 ### Depth
+- [SparseNeRF](https://arxiv.org/pdf/2303.16196)
 ### Mesh
+- [SparseNeuS](https://arxiv.org/pdf/2206.05737)
+- 
 ### Graphics
