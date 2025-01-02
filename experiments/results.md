@@ -69,3 +69,7 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
 ## Method
 ### Method1
 - CVPR 2020 best paper 的去噪思想来修正 depth shift and scale 和 depth regularization 结合
+### Method2
+- Depth completetion Method
+### Method3
+- scale invariant method to fix depth supervision signal and combine with opacity augmentation
