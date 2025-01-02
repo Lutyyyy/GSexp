@@ -11,3 +11,5 @@
   - Given several images and monodepth map and a 3D bbx prediction model, predict the 3D bbx. Initialize the points in the 3D bbx and refine the point cloud.
 ### Method3
 - 越大的高斯球渲染出来的像素越不可信、越小scale的高斯球重建效果越好。初始化时先强行分裂出大量的小高斯球，然后再用低频的、高置信度的信号合并成大高斯球。一定要用置信度mask约束范围。
+### Method4
+- 从PointNet预训练模型中挑出最相似的点云进行初始化GS点云分布
