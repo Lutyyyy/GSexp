@@ -8,4 +8,4 @@
 - Use KNN to initialize Gaussian, based on GS distribution on 2D to guide 3D
 ### Method2
 - using a 3D bounding box prediction and then using random initialization
- - Given several images and monodepth map and a 3D bbx prediction model, predict the 3D bbx. Initialize the points in the 3D bbx and refine the point cloud.
+  - Given several images and monodepth map and a 3D bbx prediction model, predict the 3D bbx. Initialize the points in the 3D bbx and refine the point cloud.
