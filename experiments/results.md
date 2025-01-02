@@ -73,3 +73,7 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
 - Depth completetion Method
 ### Method3
 - scale invariant method to fix depth supervision signal and combine with opacity augmentation
+## Reference
+### Depth
+### Mesh
+### Graphics
