@@ -1,4 +1,4 @@
-![image](https://github.com/user-attachments/assets/7aefa016-96cd-4e31-917b-790e48b2cae4)# GSfreq exp
+# GSfreq exp
 ## Motivation
 ## Method
 ## Reference
