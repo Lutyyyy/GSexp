@@ -96,4 +96,5 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
     - 实验细节详细
 - [GeCoNeRF](https://arxiv.org/pdf/2301.10941)
 - [GeoAug](https://www.ecva.net/papers/eccv_2022/papers_ECCV/papers/136770326.pdf)
+- [SCGaussian](https://arxiv.org/pdf/2411.03637)
 - 
