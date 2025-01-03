@@ -75,6 +75,13 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
 - Scale invariant method to fix depth supervision signal and combine with opacity augmentation
 ### Method4
 - 前期可以进行depth prior，后期可以用上自监督的方式进行训练。二者结合效果更好。因为pretrained的depth prior前期可以加速收敛，到后期反而会因为细节的累积而将optimization引导至local minima。进而导致随着input views的增加效果却并不明显。自监督用MVS计算depth的方式在low texture区域效果很差，此时如果使用depth prior反而会很好
+### Method5
+- MVS-based的方法
+    - Google那篇经典论文
+    - disparity约束
+    - 各种warp
+    - 各种MVSTransformer
+
 ## Reference
 ### Depth
 - [SparseNeRF](https://arxiv.org/pdf/2303.16196)
