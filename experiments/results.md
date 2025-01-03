@@ -93,6 +93,7 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
         - 9: 26.70, 0.947, 0.052
     - NeRF Blender Synthetic dataset (Blender) (1/2)
         - 8: 24.71, 0.872, 0.101
+    - 实验细节详细
 - [GeCoNeRF](https://arxiv.org/pdf/2301.10941)
 - [GeoAug](https://www.ecva.net/papers/eccv_2022/papers_ECCV/papers/136770326.pdf)
 - 
