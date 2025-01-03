@@ -16,3 +16,8 @@
 ### Method4
 - 从PointNet预训练模型中挑出最相似的点云进行初始化GS点云分布
 - 或者其他从图片理解点云的预训练网络来进行初始化点云的对齐
+
+## Reference
+### Learned-based
+### Non-learned-based
+- [DNGaussian](https://arxiv.org/pdf/2403.06912): random initialization
