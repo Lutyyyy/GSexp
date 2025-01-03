@@ -108,7 +108,7 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
         - 3: 20.77, 0.705, 0.218
     - DTU
         - 3: 20.56, 0.864, 0.122
-    - NeRF Blender Synthetic dataset (Blender) (1/2)
+    - NeRF Blender Synthetic dataset (Blender) (1/2)  **SOTA**
         - 8: 25.618, 0.894, 0.086
     - IBRNet
         - 3: 21.59, 0.731, 0.233
