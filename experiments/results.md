@@ -105,13 +105,18 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
 - [GeoAug](https://www.ecva.net/papers/eccv_2022/papers_ECCV/papers/136770326.pdf)
 - [SCGaussian](https://arxiv.org/pdf/2411.03637)
     - LLFF(1/8)
-        - 3: 20.77, 0.705, 0.218
+        - 3: 20.77, 0.705, 0.218 (*高斯球几何位置约束*)
+    - LLFF(1/4)
+        - 3: 20.09, 0.679, 0.252
     - DTU
         - 3: 20.56, 0.864, 0.122
     - NeRF Blender Synthetic dataset (Blender) (1/2)  **SOTA**
         - 8: 25.618, 0.894, 0.086
     - IBRNet
         - 3: 21.59, 0.731, 0.233
-    - T&T
+    - T&T(960 ×540)
         - 3: 22.17, 0.752, 0.257
+        - 4: 25.00
+        - 5: 26.00
+        - 6: 26.95, 0.869, 0.149
 - 
