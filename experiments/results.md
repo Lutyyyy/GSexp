@@ -83,8 +83,13 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
     - 各种MVSTransformer
 
 ## Reference
-### Depth
+### Depth/Normal
 - [SparseNeRF](https://arxiv.org/pdf/2303.16196)
+- [SolidGS](https://arxiv.org/pdf/2412.15400)
+    - LLFF(NONE)
+    - DTU
+        - 3: 21.32
+    - T&T(NONE)
 ### Mesh
 - [SparseNeuS](https://arxiv.org/pdf/2206.05737)
 - 
