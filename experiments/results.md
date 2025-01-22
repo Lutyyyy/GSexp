@@ -19,5 +19,12 @@
 
 ## Reference
 ### Learned-based
+- [MCGS](https://arxiv.org/pdf/2410.11394): LightGlue + CorresNeRF + Random filling
+    - LLFF(1/8)
+        - 3: 20.33, 0.699, 0.226
+    - Blender(1/2)
+        - 8: 24.06, 0.887, 0.089
+    - DTU(1/8)
+        - 3: 19.02, 0.810, 0.154
 ### Non-learned-based
 - [DNGaussian](https://arxiv.org/pdf/2403.06912): random initialization
