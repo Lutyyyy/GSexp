@@ -136,3 +136,6 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
         - 9: 25.90, 0.868, 0.095
     - Blender
         - 8: 25.550, 0.886, 0.092
+- [FatesGS](https://arxiv.org/pdf/2501.04628)
+    - Smooth&Ranking loss提depth精确度效果明显
+    - 
