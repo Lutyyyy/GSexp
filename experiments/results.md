@@ -80,7 +80,7 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
     - Google那篇经典论文
     - disparity约束
     - 各种warp
-        - warp过程中可以分forward和backward mapping，然后根据不同的插值方法，对高斯球直接进行监督，而不是proj.到图片再进行颜色监督(https://arxiv.org/pdf/2409.14316)。投影过程中/反投影过程中，可以用KNN颜色监督3D点的那一块区域，而不是2D颜色图片。
+        - warp过程中可以分forward和backward mapping，然后根据不同的插值方法，对高斯球直接进行监督，而不是proj.到图片再进行颜色监督[MVPGS](https://arxiv.org/pdf/2409.14316)。投影过程中/反投影过程中，可以用KNN颜色监督3D点的那一块区域，而不是2D颜色图片。
     - 各种MVSTransformer
     - 
 ## Reference
