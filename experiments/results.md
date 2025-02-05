@@ -74,14 +74,15 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
 ### Method3
 - Scale invariant method to fix depth supervision signal and combine with opacity augmentation
 ### Method4
-- 前期可以进行depth prior，后期可以用上自监督的方式进行训练。二者结合效果更好。因为pretrained的depth prior前期可以加速收敛，到后期反而会因为细节的累积而将optimization引导至local minima。进而导致随着input views的增加效果却并不明显。自监督用MVS计算depth的方式在low texture区域效果很差，此时如果使用depth prior反而会很好
+- 前期可以进行depth prior，后期可以用上自监督的方式进行训练。二者结合效果更好。因为pretrained的depth prior前期可以加速收敛，到后期反而会因为细节的累积而将optimization引导至local minima。进而导致随着input views的增加效果却并不明显。自监督用MVS计算depth的方式在low texture区域效果很差，此时如果使用depth prior反而会很好。
 ### Method5
 - MVS-based的方法
     - Google那篇经典论文
     - disparity约束
     - 各种warp
+        - warp过程中可以分forward和backward mapping，然后根据不同的插值方法，对高斯球直接进行监督，而不是proj.到图片再进行颜色监督(https://arxiv.org/pdf/2409.14316)。投影过程中/反投影过程中，可以用KNN颜色监督3D点的那一块区域，而不是2D颜色图片。
     - 各种MVSTransformer
-
+    - 
 ## Reference
 ### Depth/Normal
 - [SparseNeRF](https://arxiv.org/pdf/2303.16196)
@@ -125,7 +126,7 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
         - 5: 26.00
         - 6: 26.95, 0.869, 0.149
 - [FewViewGS](https://arxiv.org/pdf/2411.02229)
-    - MVS+color约束;10000 iterations(2000+7500+500)
+    - MVS(ROMA匹配)+color约束;10000 iterations(2000+7500+500)
     - DTU(1/4)
         - 3: 19.74, 0.861, 0.127
         - 6: 24.33, 0.920, 0.069
@@ -140,3 +141,5 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
     - Smooth&Ranking loss提depth精确度效果明显。特别是ranking+multiscal feature matching的提升更明显。单独使用smooth+ranking效果会下降
     - DTU(1/4)
         - 3: 21.80, 0.904, 0.077
+- [MVPGS](https://arxiv.org/pdf/2409.14316)
+    - MVSFormer初始化+
