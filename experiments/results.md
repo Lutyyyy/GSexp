@@ -143,6 +143,9 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
         - 3: 21.80, 0.904, 0.077
 - [MVPGS](https://arxiv.org/pdf/2409.14316)
     - **MVSFormer初始化**+**Foward warping**+Depth监督
+    - The input images are resized into  1152 × 1536 for MVSFormer
+    - MVSFormer使用了自己微调之后的模型
+    - Adopt scene bounds provided by datasets as depth ranges
     - LLFF(1/8)
         - 2: 18.53, 0.607, 0.280
         - 3: 20.54, 0.727, 0.194
@@ -159,7 +162,7 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
     - DTU(1/2)
         - 3: 20.24, 0.858, 0.124
     - NVS-RGBD
-        - 【ZED2】3: 26.62, 0.841, 0.185
-        - 【Kinect】3: 27.04, 0.887, 0.151
-    - T&T
+        - 【ZED2，960×540】3: 26.62, 0.841, 0.185
+        - 【Kinect, 640×360】3: 27.04, 0.887, 0.151
+    - T&T(960×540)
         - 3: 25.57, 0.846, 0.139
