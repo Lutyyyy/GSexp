@@ -142,7 +142,7 @@ Command: --sh_degree 2 --source_path ../../GSexp/data/mip360/kitchen --model_pat
     - DTU(1/4)
         - 3: 21.80, 0.904, 0.077
 - [MVPGS](https://arxiv.org/pdf/2409.14316)
-    - MVSFormer初始化+Foward warping+Depth监督
+    - **MVSFormer初始化**+**Foward warping**+Depth监督
     - LLFF(1/8)
         - 2: 18.53, 0.607, 0.280
         - 3: 20.54, 0.727, 0.194
