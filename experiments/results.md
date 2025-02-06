@@ -4,6 +4,8 @@
 #### Exp 1
 - few shot 和 non-few shot 结果对比
  - `kitchen`: Non-few shot: L1 0.0160362310 | PSNR 32.9537
+#### Exp 2
+- 实验对比不同初始化方式的点云的高层级特征有什么区别：先用不同的初始化点云，然后用一个点云特征提取器，然后可视化特征
 ### Method 1
 - Use KNN to initialize Gaussian, based on GS distribution on 2D to guide 3D
 ### Method2
