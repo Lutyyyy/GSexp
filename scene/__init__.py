@@ -12,17 +12,20 @@
 import os
 import random
 import json
+import time
 from utils.system_utils import searchForMaxIteration
 from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+from logging import Logger
+from typing import Optional
 
 class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0], logger: Optional[Logger]=None):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -72,9 +75,13 @@ class Scene:
         for resolution_scale in resolution_scales:
             # GSObj还加载了环形相机: render_cameras
             print("Loading Training Cameras")
+            init_time = time.time()
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args, scene_info.is_nerf_synthetic, False)
+            init_time2 = time.time()
+            logger.warning("Loading training cameras with {}s for {} cameras".format(init_time2 - init_time, len(self.train_cameras[resolution_scale])))
             print("Loading Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args, scene_info.is_nerf_synthetic, True)
+            logger.warning("Loading test cameras with {}s for {} cameras".format(time.time() - init_time2, len(self.test_cameras[resolution_scale])))
 
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
@@ -83,6 +90,7 @@ class Scene:
                                                            "point_cloud.ply"), args.train_test_exp)
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, scene_info.train_cameras, self.cameras_extent)
+            logger.debug(f"In scene/__init__.py: create_from_pcd {scene_info.ply_path}")
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))

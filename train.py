@@ -24,6 +24,7 @@ import uuid
 import json
 
 from tqdm import tqdm
+from logging import Logger
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
@@ -58,7 +59,8 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
     logger.log_command(args)
     gaussians = GaussianModel(dataset.sh_degree, logger, opt.optimizer_type)   #NOTE 该初始化函数仅仅是创建一堆空的GS属性张量 没有具体的赋值
     #NOTE Scene的初始化函数中已经包括是否选择恢复点云数据来创建高斯场景 但不包括一些累积的梯度、优化器状态、denom、spatial_lr_scale等
-    scene = Scene(dataset, gaussians) # extra_opts仅在Scene读稀疏数据集用上的
+    # TODO: extra_opts
+    scene = Scene(dataset, gaussians, logger=logger) # extra_opts仅在Scene读稀疏数据集用上的
     gaussians.training_setup(opt)
     if checkpoint:  #NOTE 具体 GS 的属性初始化在 Scene 初始化的时候实现了 这一步主要是为了恢复梯度以及信息 也就是上面 Scene 没包括的信息 应该会自动覆盖原先初始化好的 GS 属性
         (model_params, first_iter) = torch.load(checkpoint)
@@ -120,6 +122,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
+        # TODO: render function should be the same with GSObj
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         input_dict, layer_input_dict = render_pkg["input"], render_pkg["layer_input"]
@@ -132,7 +135,6 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
-        ssim_value = None
         if FUSED_SSIM_AVAILABLE:
             ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
         else:
@@ -198,7 +200,7 @@ def training(args, dataset, opt, pipe, testing_iterations: list, saving_iteratio
             # Log and save
             # 记录densify之前的状态 包括高斯球的数量和损失值 以及测试时候才记录的损失值和高斯球不透明度
             results.update({
-                f'{iteration}': training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ll1depth_pure, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp)
+                f'{iteration}': training_report(tb_writer, iteration, Ll1, loss, l1_loss, Ll1depth_pure, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp, logger=logger)
             })
 
             if (iteration in saving_iterations):  # 达到保存次数则保存场景
@@ -294,7 +296,7 @@ def prepare_output_and_logger(args):
     logger = create_logger(logpath=args.model_path)
     return tb_writer, logger
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, train_test_exp):
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, train_test_exp, logger: Optional[Logger] = None):
     result = {
         'train_loss_patches/l1_loss': Ll1.item(),  # 和cal_loss函数中画图的数值一样 因为就是直接传进去的
         'train_loss_patches/depth_loss': depth_loss, # 和cal_loss函数中画图的数值一样 因为就是直接传进去的
@@ -340,7 +342,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, depth_loss, elapse
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])          
                 depth_test_loss /= len(config['cameras'])
-                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                logger.error("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 result.update({
                     'Evaluation_Camera': config['name'],
                     'L1_test': l1_test.item(),
